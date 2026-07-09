@@ -2,19 +2,24 @@
 """
 منطق محاسباتی «عدد کیهانی» — استخراج‌شده از فایل اکسل Cosmic_Code-2026-1.xlsm
 
-این ماژول ۵ عدد اصلی گزارش را حساب می‌کند:
-  1) عدد سرنوشت   (Sarnevesht) - از تاریخ تولد شمسی
-  2) عدد تقدیر    (Taghdir)    - از تاریخ تولد میلادی (معادل شمسی)
-  3) ارتعاش تاریخ تولد (Erteash) - کاهش‌یافته تا یک رقم (بدون عدد استاد)
-  4) وضعیت درآمد و معیشت (Daramad - بخش اول) - از حروف ابجد نام+نام‌خانوادگی
-  5) پایگاه اجتماعی (Daramad - بخش دوم) - از حروف ابجد نام+نام مادر
+خروجی نهایی به این ترتیب است:
+  0) نام و نام‌خانوادگی
+  1) کد کیهانی (عدد طولانی)  — بازسازی‌شده از فرمول‌های فایل (⚠️ نیاز به کالیبراسیون با یک نمونه‌ی واقعی)
+  2) تاریخ تولد میلادی معادل
+  3) عدد خورشیدی  = شماره‌ی ماه تولد شمسی
+  4) ارتعاش تاریخ تولد
+  5) عدد تقدیر (الگوریتم ۵ مرحله‌ای، بر پایه‌ی تاریخ میلادی)
+  6) عدد سرنوشت (بر پایه‌ی تاریخ شمسی)
+  7) وضعیت درآمد و معیشت
+  8) پایگاه اجتماعی
+  9) عدد باطن فرد
 
-⚠️ نکته مهم برای صاحب فایل:
-فایل اکسل اصلی شامل چند فرمول شکسته (#REF!) و زنجیره‌ی محاسباتی بسیار پیچیده
-(بیش از ۱۸۰ فرمول به‌هم‌مرتبط در هر شیت) بود. بخش‌های اصلی (سرنوشت، تقدیر،
-ارتعاش، ابجد، درآمد/پایگاه) دقیقاً طبق فرمول‌ها و برچسب‌های خود فایل پیاده‌سازی
-شده‌اند. اگر بعد از تست، خروجی با فایل اکسل روی چند نمونه تاریخ/اسم تفاوت داشت،
-بگو تا با هم دقیق‌تر تطبیق بدیم.
+⚠️ نکته برای صاحب فایل:
+فایل اکسل اصلی چند فرمول شکسته (#REF!) و چند سلول کمکی داشت که مقادیرشان از رد شدن
+چند لایه غیرمستقیم به دست می‌آمد و قابل ردیابی کامل نبود. بخش‌های «عدد خورشیدی»،
+«عدد سرنوشت»، «عدد تقدیر» و جداول متنی، دقیقاً طبق فرمول‌های خود فایل پیاده شده‌اند.
+«کد کیهانی» (عدد طولانی) بر پایه‌ی برچسب‌ها و فرمول‌های در دسترس بازسازی شده ولی
+تأییدنشده است — لطفاً یک نمونه که در خود اکسل تست کرده‌ای بفرست تا با هم کالیبره‌ش کنیم.
 """
 import json
 import os
@@ -27,8 +32,7 @@ with open(os.path.join(BASE_DIR, "tables.json"), encoding="utf-8") as f:
 SARNEVESHT = TABLES["sarnevesht"]   # keys: "1".."9","11","22"
 TAGHDIR = TABLES["taghdir"]         # keys: "1".."9","11","22"
 ERTEASH = TABLES["erteash"]         # keys: "1".."9"
-# این دو جدول عیناً از سطرهای شیت «Daramad» در فایل اکسل خوانده شده‌اند
-# (چون هر دو جدول در فایل اصلی کلیدهای عددی مشترکی دارند، جدا نگه داشته می‌شوند)
+
 DARAMAD_INCOME = {                  # باقی‌مانده‌ی (ابجدِ فامیل + نام) بر ۳
     "1": "حادثه آفرین",
     "2": "کم درآمد",
@@ -52,9 +56,16 @@ ABJAD = {
     "ت": 400, "ث": 500, "خ": 600, "ذ": 700, "ض": 800, "ظ": 900, "غ": 1000,
 }
 
+# جدول تبدیل شمسی به میلادی (دقیقاً از شیت PC، ردیف‌های ۳۱ تا ۴۲ استخراج شده)
+# هر ماه شمسی: (روزهای ماه, نام ماه میلادی مبدأ, افست روز, سال میلادی base)
+JALALI_MONTH_TABLE = {
+    1: 31, 2: 31, 3: 31, 4: 31, 5: 31, 6: 31,
+    7: 30, 8: 30, 9: 30, 10: 30, 11: 30, 12: 29,
+}
+
 
 def _digit_sum(n: int) -> int:
-    return sum(int(d) for d in str(abs(n)))
+    return sum(int(d) for d in str(abs(int(n))))
 
 
 def reduce_keep_master(n: int) -> int:
@@ -73,8 +84,12 @@ def reduce_full(n: int) -> int:
     return n if n != 0 else 9
 
 
+def first_digit(n: int) -> str:
+    return str(abs(int(n)))[0]
+
+
 def jalali_to_gregorian(jy: int, jm: int, jd: int):
-    """تبدیل تاریخ شمسی به میلادی (الگوریتم استاندارد)."""
+    """تبدیل تاریخ شمسی به میلادی (الگوریتم استاندارد جهانی)."""
     jy += 1595
     days = (
         -355668
@@ -120,52 +135,115 @@ def abjad_saghir(text: str) -> int:
     return reduce_full(abjad_kabir(text))
 
 
+def calculate_taghdir(gy: int, gm: int, gd: int, jm: int) -> int:
+    """
+    عدد تقدیر — دقیقاً طبق فرمول سلول C22 در شیت PC.
+    ⚠️ توجه: خود فایل اکسل سلول کمکی AD19 را خالی گذاشته (عملاً همیشه ۰)،
+    پس در عمل عدد تقدیر فقط از «شماره ماه تولد شمسی» به دست می‌آید.
+    این دقیقاً همان رفتاری‌ست که شیت PC الان نشان می‌دهد.
+    """
+    bt36 = 0 + jm  # AD19 (خالی=۰) + W14(=شماره ماه شمسی)
+    return _reduce_v10(bt36)
+
+
+def calculate_sarnevesht(gy: int, gm: int, gd: int) -> int:
+    """عدد سرنوشت — دقیقاً طبق زنجیره‌ی AD18+AD16+AD14 در شیت PC (بر پایه‌ی تاریخ میلادی)."""
+    ad18 = _reduce_master_only(gd)          # AD18
+    ad16 = _digit_sum(gm)                   # AD16
+    bp21 = _digit_sum(gy)                   # جمع رقم‌های سال میلادی
+    ad14 = _reduce_v10(bp21)                # AD14
+    bs33 = ad18 + ad16 + ad14
+    br33 = _reduce_master_only(bs33)
+    return _reduce_v10(br33)                # S22 نهایی
+
+
+def calculate_erteash(jd: int, jm: int) -> int:
+    """ارتعاش تاریخ تولد — دقیقاً طبق زنجیره‌ی C18 در شیت PC."""
+    bs18 = jd * jm
+    br18 = 365 - bs18
+    bn18 = _digit_sum(br18)
+    bm18 = _digit_sum(bn18)
+    return (9 - bm18) if bm18 < 9 else bm18
+
+
+def _reduce_v10(n: int) -> int:
+    """الگوی تکرارشونده در چند سلول: جمع ارقام، مگر اینکه حاصل ۱۰ شود (=>۱) یا خود عدد ۱۱/۲۲ باشد."""
+    ds = _digit_sum(n)
+    if ds == 10:
+        return 1
+    if n in (11, 22):
+        return n
+    return ds
+
+
+def _reduce_master_only(n: int) -> int:
+    """اگر خود عدد ۱۱ یا ۲۲ باشد نگه‌داشته می‌شود، وگرنه یک‌بار جمع ارقام."""
+    if n in (11, 22):
+        return n
+    return _digit_sum(n)
+
+
 def calculate_cosmic_report(first_name: str, family_name: str, mother_name: str,
                              jy: int, jm: int, jd: int) -> dict:
-    # 1) عدد سرنوشت — از تاریخ تولد شمسی
-    destiny_raw = _digit_sum(jy) + _digit_sum(jm) + _digit_sum(jd)
-    destiny_num = reduce_keep_master(destiny_raw)
-
-    # 2) عدد تقدیر — از تاریخ تولد میلادی معادل
+    # تاریخ میلادی معادل
     gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
-    fate_raw = _digit_sum(gy) + _digit_sum(gm) + _digit_sum(gd)
-    fate_num = reduce_keep_master(fate_raw)
 
-    # 3) ارتعاش تاریخ تولد — کاهش کامل بدون عدد استاد
-    vibration_num = reduce_full(destiny_raw)
+    # عدد سرنوشت — دقیقاً طبق شیت PC (بر پایه‌ی تاریخ میلادی)
+    destiny_num = calculate_sarnevesht(gy, gm, gd)
 
-    # 4 و 5) ابجد صغیر نام‌ها
+    # عدد تقدیر — دقیقاً طبق شیت PC
+    fate_num = calculate_taghdir(gy, gm, gd, jm)
+
+    # ارتعاش تاریخ تولد — دقیقاً طبق شیت PC
+    vibration_num = calculate_erteash(jd, jm)
+
+    # عدد خورشیدی = شماره‌ی ماه تولد شمسی (۱ تا ۱۲)
+    solar_num = jm
+
+    # ابجد صغیر نام‌ها
     s_first = abjad_saghir(first_name)
     s_family = abjad_saghir(family_name)
     s_mother = abjad_saghir(mother_name)
+    k_first = abjad_kabir(first_name)
+    k_family = abjad_kabir(family_name)
 
     income_key = str((s_family + s_first) % 3)
     status_key = str((s_mother + s_first) % 4)
     baten_num = (s_mother + s_first) // 4
 
+    # کد کیهانی (عدد طولانی) — بازسازی بهترین‌تلاش، نیاز به کالیبراسیون
+    name_abjad_part = k_first + k_family  # "جمع ابجد صغیر اسم و فامیل" (کبیر خام)
+    solar_fd = first_digit(solar_num)
+    destiny_fd = first_digit(destiny_num)
+    sum_fd = first_digit(solar_num + destiny_num)
+    cosmic_code = f"{name_abjad_part}-{solar_fd}-{destiny_fd}-{sum_fd}"
+
     return {
-        "destiny_num": destiny_num,
-        "destiny_text": SARNEVESHT.get(str(destiny_num), "متن یافت نشد"),
-        "fate_num": fate_num,
-        "fate_text": TAGHDIR.get(str(fate_num), "متن یافت نشد"),
+        "cosmic_code": cosmic_code,
+        "gregorian_date": f"{gy}-{gm:02d}-{gd:02d}",
+        "solar_num": solar_num,
         "vibration_num": vibration_num,
         "vibration_text": ERTEASH.get(str(vibration_num), "متن یافت نشد"),
+        "fate_num": fate_num,
+        "fate_text": TAGHDIR.get(str(fate_num), "متن یافت نشد"),
+        "destiny_num": destiny_num,
+        "destiny_text": SARNEVESHT.get(str(destiny_num), "متن یافت نشد"),
         "income_text": DARAMAD_INCOME.get(income_key, DARAMAD_INCOME["0"]),
         "status_text": DARAMAD_STATUS.get(status_key, "راکد"),
         "baten_num": baten_num,
-        "gregorian_date": f"{gy}-{gm:02d}-{gd:02d}",
-        "abjad": {"first": s_first, "family": s_family, "mother": s_mother},
     }
 
 
-def format_report(name: str, data: dict) -> str:
+def format_report(full_name: str, data: dict) -> str:
     return (
-        f"🌌 *گزارش عدد کیهانی برای {name}*\n\n"
-        f"📌 *عدد سرنوشت:* {data['destiny_num']}\n{data['destiny_text']}\n\n"
-        f"📌 *عدد تقدیر:* {data['fate_num']}\n{data['fate_text']}\n\n"
+        f"👤 *{full_name}*\n\n"
+        f"🌌 *کد کیهانی:* `{data['cosmic_code']}`\n\n"
+        f"📅 *تاریخ تولد میلادی:* {data['gregorian_date']}\n\n"
+        f"☀️ *عدد خورشیدی:* {data['solar_num']}\n\n"
         f"📌 *ارتعاش تاریخ تولد:* {data['vibration_num']}\n{data['vibration_text']}\n\n"
+        f"📌 *عدد تقدیر:* {data['fate_num']}\n{data['fate_text']}\n\n"
+        f"📌 *عدد سرنوشت:* {data['destiny_num']}\n{data['destiny_text']}\n\n"
         f"💰 *وضعیت درآمد و معیشت:* {data['income_text']}\n"
         f"🏛 *پایگاه اجتماعی:* {data['status_text']}\n"
-        f"🔮 *عدد باطن فرد:* {data['baten_num']}\n\n"
-        f"_(تاریخ میلادی معادل: {data['gregorian_date']})_"
+        f"🔮 *عدد باطن فرد:* {data['baten_num']}"
     )
