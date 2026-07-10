@@ -15,8 +15,11 @@ import csv
 import io
 import logging
 import os
+import re
 import urllib.parse
 from datetime import time as dt_time
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from telegram import (
     InlineKeyboardButton,
@@ -36,11 +39,20 @@ from telegram.ext import (
 )
 
 from cosmic_logic import calculate_cosmic_report, format_report
+import analytics_chart
 import database
 import image_report
 
+LOG_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler(LOG_DIR / "bot.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -69,6 +81,29 @@ MONTH_KEYBOARD = InlineKeyboardMarkup(
 
 def _is_admin(user_id: int) -> bool:
     return bool(ADMIN_ID) and str(user_id) == str(ADMIN_ID)
+
+
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\u200e\u200f\u202a-\u202e]")
+_MARKDOWN_SPECIAL_RE = re.compile(r"[*_`\[\]]")
+_ALLOWED_NAME_RE = re.compile(r"^[a-zA-Zا-یآ-ی\u200c\s'\-]{1,40}$")
+
+
+def sanitize_name(raw: str) -> str | None:
+    """
+    پاک‌سازی نام/فامیل/نام مادر:
+      - حذف کاراکترهای کنترلی و جهت‌ساز نامرئی (که می‌تونن ورودی رو مخفی/دستکاری کنن)
+      - حذف کاراکترهای خاص مارک‌داون (که فرمت پیام رو خراب می‌کنن)
+      - محدود به حروف فارسی/انگلیسی، فاصله، خط تیره و آپاستروف؛ حداکثر ۴۰ کاراکتر
+    اگه ورودی بعد از پاک‌سازی نامعتبر بود، None برمی‌گردونه.
+    """
+    if not raw:
+        return None
+    text = _CONTROL_CHARS_RE.sub("", raw).strip()
+    text = _MARKDOWN_SPECIAL_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    if not text or not _ALLOWED_NAME_RE.match(text):
+        return None
+    return text
 
 
 def _result_keyboard(data: dict, full_name: str) -> InlineKeyboardMarkup:
@@ -133,19 +168,37 @@ async def start_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["first_name"] = update.message.text.strip()
-    await update.message.reply_text("نام خانوادگی‌؟")
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text(
+            "❌ نام باید فقط شامل حروف فارسی/انگلیسی باشه (بدون عدد یا نماد خاص). دوباره بفرست:"
+        )
+        return FIRST_NAME
+    context.user_data["first_name"] = clean
+    await update.message.reply_text("نام خانوادگی‌ت چیه؟")
     return FAMILY_NAME
 
 
 async def get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["family_name"] = update.message.text.strip()
-    await update.message.reply_text("(جهت تعیین پایگاه اجتماعی)نام مادر؟")
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text(
+            "❌ نام خانوادگی باید فقط شامل حروف فارسی/انگلیسی باشه. دوباره بفرست:"
+        )
+        return FAMILY_NAME
+    context.user_data["family_name"] = clean
+    await update.message.reply_text("نام مادرت چیه؟")
     return MOTHER_NAME
 
 
 async def get_mother_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["mother_name"] = update.message.text.strip()
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text(
+            "❌ نام مادر باید فقط شامل حروف فارسی/انگلیسی باشه. دوباره بفرست:"
+        )
+        return MOTHER_NAME
+    context.user_data["mother_name"] = clean
     await update.message.reply_text("روز تولدت (شمسی) رو به عدد بفرست (مثلاً 15):")
     return BIRTH_DAY
 
@@ -280,6 +333,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     try:
         s = database.get_stats()
+        growth = database.get_daily_growth(7)
+        tops = database.get_top_numbers()
     except Exception:
         logger.exception("خطا در خواندن آمار")
         await update.message.reply_text("مشکلی در خواندن آمار پیش اومد.")
@@ -293,7 +348,25 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     for r in s["latest"]:
         lines.append(f"• {r['first_name']} {r['family_name']} — {r['created_at'][:16]}")
+
+    def _fmt_top(name, rows):
+        if not rows:
+            return f"{name}: داده‌ای نیست"
+        parts = [f"{r['val']} ({r['c']} نفر)" for r in rows]
+        return f"{name}: " + " ، ".join(parts)
+
+    lines.append("\n📈 *پرتکرارترین اعداد:*")
+    lines.append(_fmt_top("سرنوشت", tops["destiny"]))
+    lines.append(_fmt_top("تقدیر", tops["fate"]))
+    lines.append(_fmt_top("ارتعاش", tops["vibration"]))
+
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    try:
+        chart_buf = analytics_chart.render_growth_chart(growth)
+        await update.message.reply_photo(photo=chart_buf, caption="رشد کاربران جدید — ۷ روز اخیر")
+    except Exception:
+        logger.exception("خطا در ساخت نمودار رشد")
 
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -399,6 +472,23 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("خطا در ارسال بکاپ روزانه")
 
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """هر خطای مدیریت‌نشده رو کامل توی logs/bot.log ثبت می‌کنه و به ادمین اطلاع می‌ده."""
+    logger.error("خطای مدیریت‌نشده رخ داد", exc_info=context.error)
+
+    if not ADMIN_ID:
+        return
+    try:
+        err_summary = f"{type(context.error).__name__}: {context.error}"
+        await context.bot.send_message(
+            chat_id=int(ADMIN_ID),
+            text=f"⚠️ خطای مدیریت‌نشده در ربات:\n`{err_summary}`\n\nجزئیات کامل در logs/bot.log",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        logger.exception("حتی اطلاع‌رسانی خطا به ادمین هم ناموفق بود")
+
+
 def main() -> None:
     if TOKEN == "PUT-YOUR-TOKEN-HERE":
         raise SystemExit(
@@ -434,6 +524,7 @@ def main() -> None:
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CallbackQueryHandler(history_from_button, pattern="^show_history$"))
+    application.add_error_handler(global_error_handler)
 
     if application.job_queue is not None and ADMIN_ID:
         application.job_queue.run_daily(daily_backup_job, time=dt_time(hour=23, minute=55))

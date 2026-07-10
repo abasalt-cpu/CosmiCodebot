@@ -172,6 +172,36 @@ def get_all_submissions() -> list:
     return [dict(r) for r in rows]
 
 
+def get_daily_growth(days: int = 7) -> list:
+    """تعداد کاربران جدید (اولین /start) به تفکیک روز، برای N روز اخیر."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT substr(first_seen,1,10) AS day, COUNT(*) AS new_users
+            FROM users
+            WHERE first_seen >= datetime('now', ?)
+            GROUP BY day
+            ORDER BY day
+            """,
+            (f"-{days} days",),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_top_numbers() -> dict:
+    """پرتکرارترین مقادیر عدد سرنوشت / تقدیر / ارتعاش بین همه‌ی کاربران."""
+    with _connect() as conn:
+        def _top(col):
+            return conn.execute(
+                f"SELECT {col} AS val, COUNT(*) AS c FROM submissions "
+                f"GROUP BY {col} ORDER BY c DESC LIMIT 3"
+            ).fetchall()
+        destiny = [dict(r) for r in _top("destiny_num")]
+        fate = [dict(r) for r in _top("fate_num")]
+        vibration = [dict(r) for r in _top("vibration_num")]
+    return {"destiny": destiny, "fate": fate, "vibration": vibration}
+
+
 def get_user_history(telegram_id: int, limit: int = 5) -> list:
     with _connect() as conn:
         rows = conn.execute(
