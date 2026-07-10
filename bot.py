@@ -6,14 +6,16 @@
 
 متغیرهای محیطی:
     BOT_TOKEN     (اجباری) توکن ربات از BotFather
-    ADMIN_ID      (اختیاری) آیدی عددی تلگرام مدیر، برای /stats و بکاپ روزانه
+    ADMIN_ID      (اختیاری) آیدی عددی تلگرام مدیر، برای /stats، /export، /broadcast، /ban و بکاپ روزانه
     DAILY_LIMIT   (اختیاری، پیش‌فرض ۵) سقف تعداد محاسبه در روز برای هر کاربر
     DB_PATH       (اختیاری) مسیر فایل دیتابیس (برای Volume دائمی روی Railway)
 """
-import logging
-import os
+import asyncio
 import csv
 import io
+import logging
+import os
+import urllib.parse
 from datetime import time as dt_time
 
 from telegram import (
@@ -22,6 +24,7 @@ from telegram import (
     ReplyKeyboardRemove,
     Update,
 )
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -42,24 +45,66 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- مراحل مکالمه ---
-FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DATE = range(4)
+FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DAY, BIRTH_MONTH, BIRTH_YEAR = range(6)
 
 TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 DAILY_LIMIT = int(os.environ.get("DAILY_LIMIT", "5"))
 
-RESULT_KEYBOARD = InlineKeyboardMarkup(
+PERSIAN_MONTHS = [
+    "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+    "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
+]
+
+MONTH_KEYBOARD = InlineKeyboardMarkup(
     [
         [
-            InlineKeyboardButton("🔄 محاسبه جدید", callback_data="new_calc"),
-            InlineKeyboardButton("📜 تاریخچه من", callback_data="show_history"),
+            InlineKeyboardButton(PERSIAN_MONTHS[i], callback_data=f"month_{i + 1}"),
+            InlineKeyboardButton(PERSIAN_MONTHS[i + 1], callback_data=f"month_{i + 2}"),
         ]
+        for i in range(0, 12, 2)
     ]
 )
 
 
+def _is_admin(user_id: int) -> bool:
+    return bool(ADMIN_ID) and str(user_id) == str(ADMIN_ID)
+
+
+def _result_keyboard(data: dict, full_name: str) -> InlineKeyboardMarkup:
+    share_text = (
+        f"🌌 گزارش عدد کیهانی {full_name}\n"
+        f"کد کیهانی: {data['cosmic_code']}\n"
+        f"عدد سرنوشت: {data['destiny_num']} | عدد تقدیر: {data['fate_num']}"
+    )
+    share_url = "https://t.me/share/url?" + urllib.parse.urlencode({"url": "", "text": share_text})
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🔄 محاسبه جدید", callback_data="new_calc"),
+                InlineKeyboardButton("📜 تاریخچه من", callback_data="show_history"),
+            ],
+            [InlineKeyboardButton("🔗 اشتراک‌گذاری نتیجه", url=share_url)],
+        ]
+    )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
+    target = update.callback_query.message if update.callback_query else update.message
+
+    try:
+        database.touch_user(user.id, user.username or "")
+    except Exception:
+        logger.exception("خطا در ثبت کاربر")
+
+    try:
+        if database.is_banned(user.id):
+            await target.reply_text("⛔ دسترسی شما به این ربات مسدود شده است.")
+            return ConversationHandler.END
+    except Exception:
+        logger.exception("خطا در بررسی وضعیت مسدودی")
+
     try:
         used_today = database.count_today(user.id)
     except Exception:
@@ -67,13 +112,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         used_today = 0
 
     if used_today >= DAILY_LIMIT:
-        target = update.callback_query.message if update.callback_query else update.message
         await target.reply_text(
             f"⛔ شما امروز به سقف {DAILY_LIMIT} محاسبه رسیدی. فردا دوباره امتحان کن."
         )
         return ConversationHandler.END
 
-    target = update.callback_query.message if update.callback_query else update.message
     await target.reply_text(
         "🌌 به ربات «عدد کیهانی» خوش اومدی!\n\n"
         "برای محاسبه چند تا سوال کوچیک می‌پرسم.\n"
@@ -91,42 +134,55 @@ async def start_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["first_name"] = update.message.text.strip()
-    await update.message.reply_text("نام خانوادگی؟")
+    await update.message.reply_text("نام خانوادگی‌ت چیه؟")
     return FAMILY_NAME
 
 
 async def get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["family_name"] = update.message.text.strip()
-    await update.message.reply_text("(جهت تعیین پایگاه اجتماعی)نام مادر؟")
+    await update.message.reply_text("نام مادرت چیه؟")
     return MOTHER_NAME
 
 
 async def get_mother_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["mother_name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "تاریخ تولدت (شمسی) رو به فرمت روز/ماه/سال بفرست.\n"
-        "مثال: 15/5/1370"
-    )
-    return BIRTH_DATE
+    await update.message.reply_text("روز تولدت (شمسی) رو به عدد بفرست (مثلاً 15):")
+    return BIRTH_DAY
 
 
-async def get_birth_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def get_birth_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
-    try:
-        parts = text.replace("-", "/").split("/")
-        jd, jm, jy = int(parts[0]), int(parts[1]), int(parts[2])
-        if not (1 <= jd <= 31 and 1 <= jm <= 12 and 1300 <= jy <= 1420):
-            raise ValueError
-    except (ValueError, IndexError):
-        await update.message.reply_text(
-            "❌ فرمت تاریخ درست نیست. دوباره به شکل روز/ماه/سال بفرست (مثلاً 15/5/1370):"
-        )
-        return BIRTH_DATE
+    if not (text.isdigit() and 1 <= int(text) <= 31):
+        await update.message.reply_text("❌ عدد روز باید بین ۱ تا ۳۱ باشه. دوباره بفرست:")
+        return BIRTH_DAY
+    context.user_data["jd"] = int(text)
+    await update.message.reply_text("ماه تولدت رو انتخاب کن:", reply_markup=MONTH_KEYBOARD)
+    return BIRTH_MONTH
+
+
+async def get_birth_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    context.user_data["jm"] = month_num
+    await query.message.reply_text(
+        f"ماه انتخابی: {PERSIAN_MONTHS[month_num - 1]} ✅\n\nسال تولدت (شمسی) رو به عدد بفرست (مثلاً 1370):"
+    )
+    return BIRTH_YEAR
+
+
+async def get_birth_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if not (text.isdigit() and 1300 <= int(text) <= 1420):
+        await update.message.reply_text("❌ سال باید بین ۱۳۰۰ تا ۱۴۲۰ باشه. دوباره بفرست:")
+        return BIRTH_YEAR
 
     ud = context.user_data
-    data = calculate_cosmic_report(
-        ud["first_name"], ud["family_name"], ud["mother_name"], jy, jm, jd
-    )
+    jy = int(text)
+    jm = ud["jm"]
+    jd = ud["jd"]
+
+    data = calculate_cosmic_report(ud["first_name"], ud["family_name"], ud["mother_name"], jy, jm, jd)
     full_name = f"{ud['first_name']} {ud['family_name']}"
 
     try:
@@ -143,20 +199,17 @@ async def get_birth_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception:
         logger.exception("خطا در ذخیره‌سازی دیتابیس")
 
-    # تلاش برای ارسال تصویر گزارش؛ اگه فونت/کتابخونه نبود، فقط متن ارسال می‌شه
-    image_sent = False
     try:
         if image_report.fonts_available():
             buf = image_report.render_report_image(full_name, data)
             await update.message.reply_photo(photo=buf)
-            image_sent = True
     except Exception:
         logger.exception("خطا در ساخت/ارسال تصویر گزارش")
 
     await update.message.reply_text(
         format_report(full_name, data),
         parse_mode="Markdown",
-        reply_markup=RESULT_KEYBOARD,
+        reply_markup=_result_keyboard(data, full_name),
     )
     return ConversationHandler.END
 
@@ -170,14 +223,23 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
+    text = (
         "🌌 *راهنمای ربات عدد کیهانی*\n\n"
         "/start — شروع محاسبه‌ی جدید\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
-        "/help — همین راهنما",
-        parse_mode="Markdown",
+        "/help — همین راهنما"
     )
+    if _is_admin(update.effective_user.id):
+        text += (
+            "\n\n👑 *دستورهای مدیر:*\n"
+            "/stats — آمار کلی\n"
+            "/export — خروجی CSV همه‌ی کاربران\n"
+            "/broadcast <متن> — ارسال پیام همگانی\n"
+            "/ban <آیدی> — مسدودکردن کاربر\n"
+            "/unban <آیدی> — رفع مسدودی"
+        )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def _send_history(target_message, telegram_id: int) -> None:
@@ -212,8 +274,7 @@ async def history_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not ADMIN_ID or str(user.id) != str(ADMIN_ID):
+    if not _is_admin(update.effective_user.id):
         await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
         return
 
@@ -236,8 +297,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not ADMIN_ID or str(user.id) != str(ADMIN_ID):
+    if not _is_admin(update.effective_user.id):
         await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
         return
 
@@ -256,7 +316,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
     writer.writeheader()
     writer.writerows(rows)
-    csv_bytes = io.BytesIO(buf.getvalue().encode("utf-8-sig"))  # utf-8-sig برای باز شدن درست در اکسل
+    csv_bytes = io.BytesIO(buf.getvalue().encode("utf-8-sig"))
     csv_bytes.name = "cosmic_bot_users.csv"
 
     await update.message.reply_document(
@@ -264,6 +324,61 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         filename="cosmic_bot_users.csv",
         caption=f"📋 لیست کامل کاربران ({len(rows)} رکورد)",
     )
+
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
+        return
+
+    message_text = " ".join(context.args) if context.args else ""
+    if not message_text:
+        await update.message.reply_text("استفاده: /broadcast متن پیام همگانی")
+        return
+
+    try:
+        user_ids = database.get_all_user_ids()
+    except Exception:
+        logger.exception("خطا در خواندن لیست کاربران")
+        await update.message.reply_text("مشکلی در خواندن لیست کاربران پیش اومد.")
+        return
+
+    await update.message.reply_text(f"⏳ در حال ارسال پیام به {len(user_ids)} کاربر...")
+
+    sent, failed = 0, 0
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text=message_text)
+            sent += 1
+        except TelegramError:
+            failed += 1
+        await asyncio.sleep(0.05)  # جلوگیری از محدودیت نرخ تلگرام
+
+    await update.message.reply_text(f"✅ ارسال شد به {sent} نفر. ناموفق: {failed}")
+
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("استفاده: /ban آیدی_عددی_تلگرام")
+        return
+    target_id = int(context.args[0])
+    ok = database.ban_user(target_id)
+    await update.message.reply_text("✅ مسدود شد." if ok else "کاربری با این آیدی پیدا نشد.")
+
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("استفاده: /unban آیدی_عددی_تلگرام")
+        return
+    target_id = int(context.args[0])
+    ok = database.unban_user(target_id)
+    await update.message.reply_text("✅ رفع مسدودی شد." if ok else "کاربری با این آیدی پیدا نشد.")
 
 
 async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -303,7 +418,9 @@ def main() -> None:
             FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_first_name)],
             FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
             MOTHER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_mother_name)],
-            BIRTH_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_birth_date)],
+            BIRTH_DAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_birth_day)],
+            BIRTH_MONTH: [CallbackQueryHandler(get_birth_month, pattern="^month_")],
+            BIRTH_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_birth_year)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -313,6 +430,9 @@ def main() -> None:
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CallbackQueryHandler(history_from_button, pattern="^show_history$"))
 
     if application.job_queue is not None and ADMIN_ID:

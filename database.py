@@ -55,6 +55,60 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_submissions_telegram_id ON submissions(telegram_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                telegram_id INTEGER PRIMARY KEY,
+                telegram_username TEXT,
+                first_seen TEXT NOT NULL,
+                banned INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+
+def touch_user(telegram_id: int, telegram_username: str) -> None:
+    """هر بار کاربر /start می‌زنه، حضورش رو در جدول users ثبت/به‌روزرسانی می‌کنه."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (telegram_id, telegram_username, first_seen, banned)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(telegram_id) DO UPDATE SET telegram_username = excluded.telegram_username
+            """,
+            (telegram_id, telegram_username, datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def is_banned(telegram_id: int) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT banned FROM users WHERE telegram_id = ?", (telegram_id,)
+        ).fetchone()
+    return bool(row["banned"]) if row else False
+
+
+def ban_user(telegram_id: int) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE users SET banned = 1 WHERE telegram_id = ?", (telegram_id,)
+        )
+    return cur.rowcount > 0
+
+
+def unban_user(telegram_id: int) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE users SET banned = 0 WHERE telegram_id = ?", (telegram_id,)
+        )
+    return cur.rowcount > 0
+
+
+def get_all_user_ids() -> list:
+    """آیدی همه‌ی کاربرانی که حداقل یک‌بار /start زدن (برای broadcast)."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT telegram_id FROM users WHERE banned = 0").fetchall()
+    return [r["telegram_id"] for r in rows]
 
 
 def save_submission(telegram_id: int, telegram_username: str, first_name: str,
