@@ -397,7 +397,7 @@ async def _send_history(target_message, telegram_id: int) -> None:
     for r in rows:
         lines.append(
             f"• {r['first_name']} {r['family_name']} — کد: `{r['cosmic_code']}` "
-            f"(سرنوشت {r['destiny_num']}, تقدیر {r['fate_num']}, ارتعاش {r['vibration_num']})\n"
+            f"(سرنوشت {r['destiny_num']}, تقدیر {r['fate_num']}, ارتعاش {r['vibration_num']}, باطن {r['baten_num']})\n"
             f"  {r['created_at'][:10]}"
         )
     await target_message.reply_text("\n".join(lines), parse_mode="Markdown")
