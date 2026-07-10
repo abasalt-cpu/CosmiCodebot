@@ -134,13 +134,13 @@ async def start_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["first_name"] = update.message.text.strip()
-    await update.message.reply_text("نام خانوادگی‌ت چیه؟")
+    await update.message.reply_text("نام خانوادگی‌؟")
     return FAMILY_NAME
 
 
 async def get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["family_name"] = update.message.text.strip()
-    await update.message.reply_text("نام مادرت چیه؟")
+    await update.message.reply_text("(جهت تعیین پایگاه اجتماعی)نام مادر؟")
     return MOTHER_NAME
 
 
