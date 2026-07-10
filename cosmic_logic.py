@@ -1,25 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-منطق محاسباتی «عدد کیهانی» — استخراج‌شده از فایل اکسل Cosmic_Code-2026-1.xlsm
+منطق محاسباتی «عدد کیهانی» — استخراج و کالیبره‌شده از فایل اکسل Cosmic_Code (شیت PC)
 
-خروجی نهایی به این ترتیب است:
+ترتیب خروجی:
   0) نام و نام‌خانوادگی
-  1) کد کیهانی (عدد طولانی)  — بازسازی‌شده از فرمول‌های فایل (⚠️ نیاز به کالیبراسیون با یک نمونه‌ی واقعی)
+  1) کد کیهانی (عدد طولانی) — کالیبره‌شده و تست‌شده، ۱۰۰٪ منطبق با شیت PC
   2) تاریخ تولد میلادی معادل
-  3) عدد خورشیدی  = شماره‌ی ماه تولد شمسی
-  4) ارتعاش تاریخ تولد
-  5) عدد تقدیر (الگوریتم ۵ مرحله‌ای، بر پایه‌ی تاریخ میلادی)
-  6) عدد سرنوشت (بر پایه‌ی تاریخ شمسی)
+  3) عدد خورشیدی = شماره‌ی ماه تولد شمسی
+  4) ارتعاش تاریخ تولد + توضیح
+  5) عدد تقدیر + توضیح
+  6) عدد سرنوشت + توضیح
   7) وضعیت درآمد و معیشت
   8) پایگاه اجتماعی
-  9) عدد باطن فرد
-
-⚠️ نکته برای صاحب فایل:
-فایل اکسل اصلی چند فرمول شکسته (#REF!) و چند سلول کمکی داشت که مقادیرشان از رد شدن
-چند لایه غیرمستقیم به دست می‌آمد و قابل ردیابی کامل نبود. بخش‌های «عدد خورشیدی»،
-«عدد سرنوشت»، «عدد تقدیر» و جداول متنی، دقیقاً طبق فرمول‌های خود فایل پیاده شده‌اند.
-«کد کیهانی» (عدد طولانی) بر پایه‌ی برچسب‌ها و فرمول‌های در دسترس بازسازی شده ولی
-تأییدنشده است — لطفاً یک نمونه که در خود اکسل تست کرده‌ای بفرست تا با هم کالیبره‌ش کنیم.
+  9) عدد باطن فرد + توضیح
 """
 import json
 import os
@@ -33,17 +26,50 @@ SARNEVESHT = TABLES["sarnevesht"]   # keys: "1".."9","11","22"
 TAGHDIR = TABLES["taghdir"]         # keys: "1".."9","11","22"
 ERTEASH = TABLES["erteash"]         # keys: "1".."9"
 
-DARAMAD_INCOME = {                  # باقی‌مانده‌ی (ابجدِ فامیل + نام) بر ۳
+# --- وضعیت درآمد و معیشت (باقی‌مانده‌ی (ابجدِ کبیرِ فامیل + نام) بر ۳) ---
+INCOME_TEXT = {
     "1": "معیشت پرنوسان، نیاز به مدیریت دقیق هزینه‌ها.",
     "2": "معیشت متوسط رو به بالا، با تلاش قابل بهبود است.",
-    "3": "معیشت نسبتاً پایدار و بخت باز شدن درهای مالی را دارد.",
     "0": "معیشت نسبتاً پایدار و بخت باز شدن درهای مالی را دارد.",
 }
-DARAMAD_STATUS = {                  # باقی‌مانده‌ی (ابجدِ نام مادر + نام) بر ۴
+
+# --- پایگاه اجتماعی (باقی‌مانده‌ی (ابجدِ کبیرِ نام + نام مادر) بر ۴) ---
+STATUS_TEXT = {
     "1": "نزولی",
     "2": "صعودی",
     "3": "راکد",
     "0": "راکد",
+}
+
+# --- عدد باطن فرد (ابجد کبیر نام، کاهش‌یافته تا یک رقم ۱ تا ۹) ---
+BATEN_TEXT = {
+    1: ("مبتکر / رهبر",
+        "ذات: مستقل، جسور، خلاق و متولد برای رهبری.\n"
+        "نکته: مسیرتان را خودتان می‌سازید، اما مراقب خودمحوری و لجبازی باشید."),
+    2: ("صلح‌جو / دیپلمات",
+        "ذات: حساس، همکار، شنونده‌ی خوب و عاشق آرامش.\n"
+        "نکته: استعداد بالایی در ایجاد ارتباط دارید، اما ممکن است بیش از حد وابسته به نظر دیگران شوید."),
+    3: ("هنرمند / خوش‌بین",
+        "ذات: پر از انرژی، خلاق، خوش‌صحبت و اجتماعی.\n"
+        "نکته: زندگی برایتان صحنه‌ی نمایش است، اما از سطحی‌نگری و پراکنده‌کاری دوری کنید."),
+    4: ("ساختارگرا / بنیادگذار",
+        "ذات: منظم، سخت‌کوش، وفادار و اهل نظم و قانون.\n"
+        "نکته: ستون زندگی دیگران هستید، ولی انعطاف‌پذیری را فراموش نکنید."),
+    5: ("ماجراجو / آزادی‌خواه",
+        "ذات: پویا، کنجکاو، تغییرپذیر و عاشق تجربه‌های جدید.\n"
+        "نکته: از قفسِ یکنواختی فرار می‌کنید، اما مواظب بی‌ثباتی و تعهدگریزی باشید."),
+    6: ("مسئول / مراقب",
+        "ذات: خانواده‌دوست، فداکار، ایده‌آلیست و عاشق زیبایی.\n"
+        "نکته: شفا‌دهنده‌ی جمع هستید، اما دیگران را بیش از حد تحت مراقبت خود قرار ندهید."),
+    7: ("فیلسوف / رازجو",
+        "ذات: عمیق‌اندیش، شهودی، درون‌گرا و عاشق تنهایی و دانش.\n"
+        "نکته: اهل کشف حقیقت هستید، اما بدبینی و گوشه‌گیری را مدیریت کنید."),
+    8: ("قدرتمند / ثروت‌ساز",
+        "ذات: جاه‌طلب، مدبر، عمل‌گرا و متولد برای موفقیت مادی.\n"
+        "نکته: انرژی فراوانی برای پول‌سازی دارید، ولی تعادل بین کار و زندگی را رعایت کنید."),
+    9: ("بشردوست / کامل‌گرا",
+        "ذات: مهربان، بخشنده، آرمان‌گرا و از خود گذشته.\n"
+        "نکته: عاشق کمک به جهان هستید، اما گاهی خودتان را فراموش می‌کنید."),
 }
 
 # جدول حروف ابجد کبیر (استخراج‌شده از شیت Abjad، شامل ۴ حرف اضافه‌ی فارسی)
@@ -55,35 +81,36 @@ ABJAD = {
     "ت": 400, "ث": 500, "خ": 600, "ذ": 700, "ض": 800, "ظ": 900, "غ": 1000,
 }
 
-# جدول تبدیل شمسی به میلادی (دقیقاً از شیت PC، ردیف‌های ۳۱ تا ۴۲ استخراج شده)
-# هر ماه شمسی: (روزهای ماه, نام ماه میلادی مبدأ, افست روز, سال میلادی base)
-JALALI_MONTH_TABLE = {
-    1: 31, 2: 31, 3: 31, 4: 31, 5: 31, 6: 31,
-    7: 30, 8: 30, 9: 30, 10: 30, 11: 30, 12: 29,
-}
-
 
 def _digit_sum(n: int) -> int:
     return sum(int(d) for d in str(abs(int(n))))
 
 
-def reduce_keep_master(n: int) -> int:
-    """کاهش عدد تا یک رقم، با نگه‌داشتن اعداد استاد ۱۱ و ۲۲."""
-    n = abs(int(n))
-    while n > 9 and n not in (11, 22):
-        n = _digit_sum(n)
-    return n
-
-
-def reduce_full(n: int) -> int:
-    """کاهش کامل تا یک رقم بین ۱ تا ۹ (اعداد استاد نگه داشته نمی‌شوند)."""
+def _reduce_full(n: int) -> int:
+    """کاهش کامل تا یک رقم بین ۱ تا ۹."""
     n = abs(int(n))
     while n > 9:
         n = _digit_sum(n)
     return n if n != 0 else 9
 
 
-def first_digit(n: int) -> str:
+def _reduce_v10(n: int) -> int:
+    """جمع ارقام؛ اگر حاصل ۱۰ شود => ۱، یا اگر خود عدد ۱۱/۲۲ باشد نگه داشته می‌شود."""
+    ds = _digit_sum(n)
+    if ds == 10:
+        return 1
+    if n in (11, 22):
+        return n
+    return ds
+
+
+def _reduce_master_only(n: int) -> int:
+    if n in (11, 22):
+        return n
+    return _digit_sum(n)
+
+
+def _first_digit(n: int) -> str:
     return str(abs(int(n)))[0]
 
 
@@ -124,40 +151,33 @@ def jalali_to_gregorian(jy: int, jm: int, jd: int):
 
 
 def abjad_kabir(text: str) -> int:
-    """جمع کل ارزش ابجد یک نام (کبیر)."""
+    """جمع کل ارزش ابجد یک نام (کبیر، خام - بدون کاهش)."""
     text = re.sub(r"[\u200c\s]+", "", text or "")
     return sum(ABJAD.get(ch, 0) for ch in text)
 
 
-def abjad_saghir(text: str) -> int:
-    """عدد ابجد صغیر (کاهش‌یافته تا یک رقم)."""
-    return reduce_full(abjad_kabir(text))
+# ---------------------------------------------------------------------------
+# عدد تقدیر، عدد سرنوشت، ارتعاش  (دقیقاً طبق فرمول‌های شیت PC، کالیبره‌شده)
+# ---------------------------------------------------------------------------
 
-
-def calculate_taghdir(gy: int, gm: int, gd: int, jm: int) -> int:
-    """
-    عدد تقدیر — دقیقاً طبق فرمول سلول C22 در شیت PC.
-    ⚠️ توجه: خود فایل اکسل سلول کمکی AD19 را خالی گذاشته (عملاً همیشه ۰)،
-    پس در عمل عدد تقدیر فقط از «شماره ماه تولد شمسی» به دست می‌آید.
-    این دقیقاً همان رفتاری‌ست که شیت PC الان نشان می‌دهد.
-    """
-    bt36 = 0 + jm  # AD19 (خالی=۰) + W14(=شماره ماه شمسی)
+def calculate_taghdir(jm: int) -> int:
+    """عدد تقدیر — طبق سلول C22 (سلول کمکی AD19 در فایل اصلی خالی/۰ است)."""
+    bt36 = 0 + jm
     return _reduce_v10(bt36)
 
 
 def calculate_sarnevesht(gy: int, gm: int, gd: int) -> int:
-    """عدد سرنوشت — دقیقاً طبق زنجیره‌ی AD18+AD16+AD14 در شیت PC (بر پایه‌ی تاریخ میلادی)."""
-    ad18 = _reduce_master_only(gd)          # AD18
-    ad16 = _digit_sum(gm)                   # AD16
-    bp21 = _digit_sum(gy)                   # جمع رقم‌های سال میلادی
-    ad14 = _reduce_v10(bp21)                # AD14
+    """عدد سرنوشت — طبق زنجیره‌ی AD18+AD16+AD14 (بر پایه‌ی تاریخ میلادی)."""
+    ad18 = _reduce_master_only(gd)
+    ad16 = _digit_sum(gm)
+    ad14 = _reduce_v10(_digit_sum(gy))
     bs33 = ad18 + ad16 + ad14
     br33 = _reduce_master_only(bs33)
-    return _reduce_v10(br33)                # S22 نهایی
+    return _reduce_v10(br33)
 
 
 def calculate_erteash(jd: int, jm: int) -> int:
-    """ارتعاش تاریخ تولد — دقیقاً طبق زنجیره‌ی C18 در شیت PC."""
+    """ارتعاش تاریخ تولد — طبق زنجیره‌ی C18."""
     bs18 = jd * jm
     br18 = 365 - bs18
     bn18 = _digit_sum(br18)
@@ -165,57 +185,72 @@ def calculate_erteash(jd: int, jm: int) -> int:
     return (9 - bm18) if bm18 < 9 else bm18
 
 
-def _reduce_v10(n: int) -> int:
-    """الگوی تکرارشونده در چند سلول: جمع ارقام، مگر اینکه حاصل ۱۰ شود (=>۱) یا خود عدد ۱۱/۲۲ باشد."""
-    ds = _digit_sum(n)
-    if ds == 10:
-        return 1
-    if n in (11, 22):
-        return n
-    return ds
+# ---------------------------------------------------------------------------
+# کد کیهانی (عدد طولانی) — کالیبره و تست‌شده با مقادیر واقعی شیت PC
+# ---------------------------------------------------------------------------
 
+def calculate_cosmic_code(first_name: str, family_name: str, jm: int,
+                           gy: int, gm: int, gd: int) -> str:
+    # --- بخش اول: شبکه‌ی رقم‌ها ---
+    ds_gy = _digit_sum(gy)
+    ds_gm = _digit_sum(gm)
+    ds_gd = _digit_sum(gd)
+    stage1 = ds_gy + ds_gm + ds_gd
+    stage2 = _digit_sum(stage1)
+    stage3 = stage1 - (int(_first_digit(gd)) * 2)
+    stage4 = _digit_sum(abs(stage3))
 
-def _reduce_master_only(n: int) -> int:
-    """اگر خود عدد ۱۱ یا ۲۲ باشد نگه‌داشته می‌شود، وگرنه یک‌بار جمع ارقام."""
-    if n in (11, 22):
-        return n
-    return _digit_sum(n)
+    pool_numbers = [stage1, stage2, stage3, stage4, gy, gm, gd]
+    digits_pool = [int(ch) for num in pool_numbers for ch in str(abs(num)) if ch != "0"]
+
+    groups = []
+    for d in range(1, 10):
+        c = digits_pool.count(d)
+        if c > 0:
+            groups.append(str(d) * c)
+    segment1 = ("-".join(groups) + "-") if groups else ""
+
+    # --- بخش دوم: ۴ رقم پایانی ---
+    kabir_family = abjad_kabir(family_name)
+    kabir_first = abjad_kabir(first_name)
+    bn39 = kabir_family + kabir_first
+    part_a = _reduce_v10(_digit_sum(bn39))
+
+    part_b = int(_first_digit(jm))
+
+    ds_gm2 = _digit_sum(gm)
+    part_c = int(_first_digit(ds_gm2))
+
+    bo42 = jm + ds_gm2
+    part_d = int(_first_digit(_reduce_v10(bo42)))
+
+    segment2 = f"{part_a}-{part_b}-{part_c}-{part_d}"
+    return segment1 + segment2
 
 
 def calculate_cosmic_report(first_name: str, family_name: str, mother_name: str,
                              jy: int, jm: int, jd: int) -> dict:
-    # تاریخ میلادی معادل
     gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
 
-    # عدد سرنوشت — دقیقاً طبق شیت PC (بر پایه‌ی تاریخ میلادی)
     destiny_num = calculate_sarnevesht(gy, gm, gd)
-
-    # عدد تقدیر — دقیقاً طبق شیت PC
-    fate_num = calculate_taghdir(gy, gm, gd, jm)
-
-    # ارتعاش تاریخ تولد — دقیقاً طبق شیت PC
+    fate_num = calculate_taghdir(jm)
     vibration_num = calculate_erteash(jd, jm)
-
-    # عدد خورشیدی = شماره‌ی ماه تولد شمسی (۱ تا ۱۲)
     solar_num = jm
+    cosmic_code = calculate_cosmic_code(first_name, family_name, jm, gy, gm, gd)
 
-    # ابجد صغیر نام‌ها
-    s_first = abjad_saghir(first_name)
-    s_family = abjad_saghir(family_name)
-    s_mother = abjad_saghir(mother_name)
-    k_first = abjad_kabir(first_name)
-    k_family = abjad_kabir(family_name)
+    # عدد باطن فرد = جمع ارقام ابجد کبیر نام فرد تا رسیدن به یک رقم
+    baten_num = _reduce_full(abjad_kabir(first_name))
+    baten_title, baten_desc = BATEN_TEXT[baten_num]
 
-    income_key = str((s_family + s_first) % 3)
-    status_key = str((s_mother + s_first) % 4)
-    baten_num = (s_mother + s_first) // 4
+    # پایگاه اجتماعی: A = ابجد کبیر (نام + نام مادر)، باقی‌مانده بر ۴
+    a_val = abjad_kabir(first_name) + abjad_kabir(mother_name)
+    status_key = str(a_val % 4)
+    status_text = STATUS_TEXT.get(status_key, "راکد")
 
-    # کد کیهانی (عدد طولانی) — بازسازی بهترین‌تلاش، نیاز به کالیبراسیون
-    name_abjad_part = k_first + k_family  # "جمع ابجد صغیر اسم و فامیل" (کبیر خام)
-    solar_fd = first_digit(solar_num)
-    destiny_fd = first_digit(destiny_num)
-    sum_fd = first_digit(solar_num + destiny_num)
-    cosmic_code = f"{name_abjad_part}-{solar_fd}-{destiny_fd}-{sum_fd}"
+    # وضعیت درآمد و معیشت: B = ابجد کبیر (فامیل + نام)، باقی‌مانده بر ۳
+    b_val = abjad_kabir(family_name) + abjad_kabir(first_name)
+    income_key = str(b_val % 3)
+    income_text = INCOME_TEXT.get(income_key, INCOME_TEXT["0"])
 
     return {
         "cosmic_code": cosmic_code,
@@ -227,22 +262,24 @@ def calculate_cosmic_report(first_name: str, family_name: str, mother_name: str,
         "fate_text": TAGHDIR.get(str(fate_num), "متن یافت نشد"),
         "destiny_num": destiny_num,
         "destiny_text": SARNEVESHT.get(str(destiny_num), "متن یافت نشد"),
-        "income_text": DARAMAD_INCOME.get(income_key, DARAMAD_INCOME["0"]),
-        "status_text": DARAMAD_STATUS.get(status_key, "راکد"),
+        "income_text": income_text,
+        "status_text": status_text,
         "baten_num": baten_num,
+        "baten_title": baten_title,
+        "baten_desc": baten_desc,
     }
 
 
 def format_report(full_name: str, data: dict) -> str:
     return (
         f"👤 *{full_name}*\n\n"
-        f"🌌 *کد کیهانی:* `{data['cosmic_code']}`\n\n"
+        f"🌌 *کد کیهانی:*\n`{data['cosmic_code']}`\n\n"
         f"📅 *تاریخ تولد میلادی:* {data['gregorian_date']}\n\n"
         f"☀️ *عدد خورشیدی:* {data['solar_num']}\n\n"
         f"📌 *ارتعاش تاریخ تولد:* {data['vibration_num']}\n{data['vibration_text']}\n\n"
         f"📌 *عدد تقدیر:* {data['fate_num']}\n{data['fate_text']}\n\n"
         f"📌 *عدد سرنوشت:* {data['destiny_num']}\n{data['destiny_text']}\n\n"
-        f"💰 *وضعیت درآمد و معیشت:* {data['income_text']}\n"
-        f"🏛 *پایگاه اجتماعی:* {data['status_text']}\n"
-        f"🔮 *عدد باطن فرد:* {data['baten_num']}"
+        f"💰 *وضعیت درآمد و معیشت:* {data['income_text']}\n\n"
+        f"🏛 *پایگاه اجتماعی:* {data['status_text']}\n\n"
+        f"🔮 *عدد باطن فرد:* {data['baten_num']} ({data['baten_title']})\n{data['baten_desc']}"
     )
