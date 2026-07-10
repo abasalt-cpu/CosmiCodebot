@@ -103,6 +103,21 @@ def count_today(telegram_id: int) -> int:
     return row["c"]
 
 
+def get_all_submissions() -> list:
+    """همه‌ی رکوردها، برای خروجی CSV به ادمین (جدیدترین اول)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT telegram_id, telegram_username, first_name, family_name, mother_name,
+                   jalali_year, jalali_month, jalali_day, gregorian_date, cosmic_code,
+                   destiny_num, fate_num, vibration_num, baten_num, created_at
+            FROM submissions
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_user_history(telegram_id: int, limit: int = 5) -> list:
     with _connect() as conn:
         rows = conn.execute(

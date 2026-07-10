@@ -12,6 +12,8 @@
 """
 import logging
 import os
+import csv
+import io
 from datetime import time as dt_time
 
 from telegram import (
@@ -233,6 +235,37 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not ADMIN_ID or str(user.id) != str(ADMIN_ID):
+        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
+        return
+
+    try:
+        rows = database.get_all_submissions()
+    except Exception:
+        logger.exception("خطا در خواندن اطلاعات برای خروجی")
+        await update.message.reply_text("مشکلی در ساخت خروجی پیش اومد.")
+        return
+
+    if not rows:
+        await update.message.reply_text("هنوز هیچ رکوردی ثبت نشده.")
+        return
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_bytes = io.BytesIO(buf.getvalue().encode("utf-8-sig"))  # utf-8-sig برای باز شدن درست در اکسل
+    csv_bytes.name = "cosmic_bot_users.csv"
+
+    await update.message.reply_document(
+        document=csv_bytes,
+        filename="cosmic_bot_users.csv",
+        caption=f"📋 لیست کامل کاربران ({len(rows)} رکورد)",
+    )
+
+
 async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """هر شب فایل دیتابیس رو برای ادمین می‌فرسته (چون دیسک Railway ممکنه پایدار نباشه)."""
     if not ADMIN_ID:
@@ -279,6 +312,7 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CallbackQueryHandler(history_from_button, pattern="^show_history$"))
 
     if application.job_queue is not None and ADMIN_ID:
