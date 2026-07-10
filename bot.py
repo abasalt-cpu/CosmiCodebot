@@ -22,6 +22,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from telegram import (
+    BotCommand,
+    BotCommandScopeChat,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -77,6 +79,23 @@ MONTH_KEYBOARD = InlineKeyboardMarkup(
         for i in range(0, 12, 2)
     ]
 )
+
+
+USER_COMMANDS = [
+    ("start", "🌌 محاسبه‌ی جدید"),
+    ("menu", "📋 منوی اصلی"),
+    ("history", "📜 تاریخچه‌ی من"),
+    ("help", "ℹ️ راهنما"),
+    ("cancel", "❌ لغو مکالمه"),
+]
+
+ADMIN_EXTRA_COMMANDS = [
+    ("stats", "📊 آمار ربات"),
+    ("export", "📋 خروجی CSV کاربران"),
+    ("broadcast", "📢 ارسال پیام همگانی"),
+    ("ban", "🚫 مسدودکردن کاربر"),
+    ("unban", "✅ رفع مسدودی کاربر"),
+]
 
 
 def _is_admin(user_id: int) -> bool:
@@ -167,6 +186,11 @@ async def start_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return await start(update, context)
 
 
+SKIP_MOTHER_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("⏭ رد کردن (نمی‌خوام وارد کنم)", callback_data="skip_mother")]]
+)
+
+
 async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     clean = sanitize_name(update.message.text)
     if not clean:
@@ -175,7 +199,7 @@ async def get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return FIRST_NAME
     context.user_data["first_name"] = clean
-    await update.message.reply_text("نام خانوادگی‌؟")
+    await update.message.reply_text("نام خانوادگی؟")
     return FAMILY_NAME
 
 
@@ -187,7 +211,11 @@ async def get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return FAMILY_NAME
     context.user_data["family_name"] = clean
-    await update.message.reply_text("(جهت تعیین پایگاه اجتماعی)نام مادر؟")
+    await update.message.reply_text(
+        "نام مادر؟ (جهت تعیین پایگاه اجتماعی)\n"
+        "اگه نمی‌خوای وارد کنی، دکمه‌ی رد کردن رو بزن.",
+        reply_markup=SKIP_MOTHER_KEYBOARD,
+    )
     return MOTHER_NAME
 
 
@@ -195,11 +223,24 @@ async def get_mother_name(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     clean = sanitize_name(update.message.text)
     if not clean:
         await update.message.reply_text(
-            "❌ نام مادر باید فقط شامل حروف فارسی/انگلیسی باشه. دوباره بفرست:"
+            "❌ نام مادر باید فقط شامل حروف فارسی/انگلیسی باشه. دوباره بفرست، "
+            "یا دکمه‌ی رد کردن رو بزن.",
+            reply_markup=SKIP_MOTHER_KEYBOARD,
         )
         return MOTHER_NAME
     context.user_data["mother_name"] = clean
     await update.message.reply_text("روز تولدت (شمسی) رو به عدد بفرست (مثلاً 15):")
+    return BIRTH_DAY
+
+
+async def skip_mother_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["mother_name"] = ""
+    await query.message.reply_text(
+        "باشه، رد شد (پایگاه اجتماعی برات محاسبه نمی‌شه).\n\n"
+        "روز تولدت (شمسی) رو به عدد بفرست (مثلاً 15):"
+    )
     return BIRTH_DAY
 
 
@@ -275,15 +316,56 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    is_admin = _is_admin(update.effective_user.id)
+
+    buttons = [
+        [InlineKeyboardButton("🌌 محاسبه‌ی جدید", callback_data="new_calc")],
+        [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
+        [InlineKeyboardButton("ℹ️ راهنما", callback_data="show_help")],
+    ]
+    if is_admin:
+        buttons.append([
+            InlineKeyboardButton("📊 آمار", callback_data="admin_stats"),
+            InlineKeyboardButton("📋 خروجی CSV", callback_data="admin_export"),
+        ])
+
+    title = "📋 *منوی مدیریت*" if is_admin else "📋 *منوی اصلی*"
+    target = update.callback_query.message if update.callback_query else update.message
+    if update.callback_query:
+        await update.callback_query.answer()
+    await target.reply_text(title, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def help_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    await help_command_impl(update.callback_query.message, update.effective_user.id)
+
+
+async def stats_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    if not _is_admin(update.effective_user.id):
+        return
+    await _send_stats(update.callback_query.message)
+
+
+async def export_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    if not _is_admin(update.effective_user.id):
+        return
+    await _send_export(update.callback_query.message)
+
+
+async def help_command_impl(target_message, user_id: int) -> None:
     text = (
         "🌌 *راهنمای ربات عدد کیهانی*\n\n"
         "/start — شروع محاسبه‌ی جدید\n"
+        "/menu — منوی اصلی (دکمه‌ای)\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
     )
-    if _is_admin(update.effective_user.id):
+    if _is_admin(user_id):
         text += (
             "\n\n👑 *دستورهای مدیر:*\n"
             "/stats — آمار کلی\n"
@@ -292,7 +374,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/ban <آیدی> — مسدودکردن کاربر\n"
             "/unban <آیدی> — رفع مسدودی"
         )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await target_message.reply_text(text, parse_mode="Markdown")
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await help_command_impl(update.message, update.effective_user.id)
 
 
 async def _send_history(target_message, telegram_id: int) -> None:
@@ -326,18 +412,14 @@ async def history_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _send_history(update.callback_query.message, update.effective_user.id)
 
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
-        return
-
+async def _send_stats(target_message) -> None:
     try:
         s = database.get_stats()
         growth = database.get_daily_growth(7)
         tops = database.get_top_numbers()
     except Exception:
         logger.exception("خطا در خواندن آمار")
-        await update.message.reply_text("مشکلی در خواندن آمار پیش اومد.")
+        await target_message.reply_text("مشکلی در خواندن آمار پیش اومد.")
         return
 
     lines = [
@@ -360,29 +442,32 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     lines.append(_fmt_top("تقدیر", tops["fate"]))
     lines.append(_fmt_top("ارتعاش", tops["vibration"]))
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await target_message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     try:
         chart_buf = analytics_chart.render_growth_chart(growth)
-        await update.message.reply_photo(photo=chart_buf, caption="رشد کاربران جدید — ۷ روز اخیر")
+        await target_message.reply_photo(photo=chart_buf, caption="رشد کاربران جدید — ۷ روز اخیر")
     except Exception:
         logger.exception("خطا در ساخت نمودار رشد")
 
 
-async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update.effective_user.id):
         await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
         return
+    await _send_stats(update.message)
 
+
+async def _send_export(target_message) -> None:
     try:
         rows = database.get_all_submissions()
     except Exception:
         logger.exception("خطا در خواندن اطلاعات برای خروجی")
-        await update.message.reply_text("مشکلی در ساخت خروجی پیش اومد.")
+        await target_message.reply_text("مشکلی در ساخت خروجی پیش اومد.")
         return
 
     if not rows:
-        await update.message.reply_text("هنوز هیچ رکوردی ثبت نشده.")
+        await target_message.reply_text("هنوز هیچ رکوردی ثبت نشده.")
         return
 
     buf = io.StringIO()
@@ -392,11 +477,18 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     csv_bytes = io.BytesIO(buf.getvalue().encode("utf-8-sig"))
     csv_bytes.name = "cosmic_bot_users.csv"
 
-    await update.message.reply_document(
+    await target_message.reply_document(
         document=csv_bytes,
         filename="cosmic_bot_users.csv",
         caption=f"📋 لیست کامل کاربران ({len(rows)} رکورد)",
     )
+
+
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("این دستور فقط برای مدیر ربات در دسترسه.")
+        return
+    await _send_export(update.message)
 
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -507,7 +599,10 @@ def main() -> None:
         states={
             FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_first_name)],
             FAMILY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_family_name)],
-            MOTHER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_mother_name)],
+            MOTHER_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_mother_name),
+                CallbackQueryHandler(skip_mother_name, pattern="^skip_mother$"),
+            ],
             BIRTH_DAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_birth_day)],
             BIRTH_MONTH: [CallbackQueryHandler(get_birth_month, pattern="^month_")],
             BIRTH_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_birth_year)],
@@ -517,6 +612,7 @@ def main() -> None:
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("export", export_command))
@@ -524,7 +620,25 @@ def main() -> None:
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CallbackQueryHandler(history_from_button, pattern="^show_history$"))
+    application.add_handler(CallbackQueryHandler(help_from_button, pattern="^show_help$"))
+    application.add_handler(CallbackQueryHandler(stats_from_button, pattern="^admin_stats$"))
+    application.add_handler(CallbackQueryHandler(export_from_button, pattern="^admin_export$"))
     application.add_error_handler(global_error_handler)
+
+    async def _setup_commands(app: Application) -> None:
+        await app.bot.set_my_commands(
+            [BotCommand(cmd, desc) for cmd, desc in USER_COMMANDS]
+        )
+        if ADMIN_ID:
+            try:
+                await app.bot.set_my_commands(
+                    [BotCommand(cmd, desc) for cmd, desc in USER_COMMANDS + ADMIN_EXTRA_COMMANDS],
+                    scope=BotCommandScopeChat(chat_id=int(ADMIN_ID)),
+                )
+            except Exception:
+                logger.exception("تنظیم منوی دستورهای ادمین ناموفق بود")
+
+    application.post_init = _setup_commands
 
     if application.job_queue is not None and ADMIN_ID:
         application.job_queue.run_daily(daily_backup_job, time=dt_time(hour=23, minute=55))

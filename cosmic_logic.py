@@ -243,9 +243,13 @@ def calculate_cosmic_report(first_name: str, family_name: str, mother_name: str,
     baten_title, baten_desc = BATEN_TEXT[baten_num]
 
     # پایگاه اجتماعی: A = ابجد کبیر (نام + نام مادر)، باقی‌مانده بر ۴
-    a_val = abjad_kabir(first_name) + abjad_kabir(mother_name)
-    status_key = str(a_val % 4)
-    status_text = STATUS_TEXT.get(status_key, "راکد")
+    # اگه نام مادر وارد نشده باشه، این بخش محاسبه نمی‌شه.
+    if mother_name:
+        a_val = abjad_kabir(first_name) + abjad_kabir(mother_name)
+        status_key = str(a_val % 4)
+        status_text = STATUS_TEXT.get(status_key, "راکد")
+    else:
+        status_text = None
 
     # وضعیت درآمد و معیشت: B = ابجد کبیر (فامیل + نام)، باقی‌مانده بر ۳
     b_val = abjad_kabir(family_name) + abjad_kabir(first_name)
@@ -271,6 +275,11 @@ def calculate_cosmic_report(first_name: str, family_name: str, mother_name: str,
 
 
 def format_report(full_name: str, data: dict) -> str:
+    status_line = (
+        f"🏛 *پایگاه اجتماعی:* {data['status_text']}\n\n"
+        if data["status_text"]
+        else "🏛 *پایگاه اجتماعی:* محاسبه نشد (نام مادر وارد نشده)\n\n"
+    )
     return (
         f"👤 *{full_name}*\n\n"
         f"🌌 *کد کیهانی:*\n`{data['cosmic_code']}`\n\n"
@@ -280,6 +289,6 @@ def format_report(full_name: str, data: dict) -> str:
         f"📌 *عدد تقدیر:* {data['fate_num']}\n{data['fate_text']}\n\n"
         f"📌 *عدد سرنوشت:* {data['destiny_num']}\n{data['destiny_text']}\n\n"
         f"💰 *وضعیت درآمد و معیشت:* {data['income_text']}\n\n"
-        f"🏛 *پایگاه اجتماعی:* {data['status_text']}\n\n"
+        f"{status_line}"
         f"🔮 *عدد باطن فرد:* {data['baten_num']} ({data['baten_title']})\n{data['baten_desc']}"
     )
