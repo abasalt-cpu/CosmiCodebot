@@ -199,7 +199,8 @@ def get_top_numbers() -> dict:
         destiny = [dict(r) for r in _top("destiny_num")]
         fate = [dict(r) for r in _top("fate_num")]
         vibration = [dict(r) for r in _top("vibration_num")]
-    return {"destiny": destiny, "fate": fate, "vibration": vibration}
+        baten = [dict(r) for r in _top("baten_num")]
+    return {"destiny": destiny, "fate": fate, "vibration": vibration, "baten": baten}
 
 
 def get_user_history(telegram_id: int, limit: int = 5) -> list:

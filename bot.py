@@ -441,6 +441,7 @@ async def _send_stats(target_message) -> None:
     lines.append(_fmt_top("سرنوشت", tops["destiny"]))
     lines.append(_fmt_top("تقدیر", tops["fate"]))
     lines.append(_fmt_top("ارتعاش", tops["vibration"]))
+    lines.append(_fmt_top("باطن", tops["baten"]))
 
     await target_message.reply_text("\n".join(lines), parse_mode="Markdown")
 
