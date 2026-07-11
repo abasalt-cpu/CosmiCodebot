@@ -7,7 +7,7 @@
 متغیرهای محیطی:
     BOT_TOKEN     (اجباری) توکن ربات از BotFather
     ADMIN_ID      (اختیاری) آیدی عددی تلگرام مدیر، برای /stats، /export، /broadcast، /ban و بکاپ روزانه
-    DAILY_LIMIT   (اختیاری، پیش‌فرض ۵) سقف تعداد محاسبه در روز برای هر کاربر
+    DAILY_LIMIT   (اختیاری، پیش‌فرض ۱۰) سقف تعداد محاسبه در روز برای هر کاربر عادی (ادمین محدودیت نداره)
     DB_PATH       (اختیاری) مسیر فایل دیتابیس (برای Volume دائمی روی Railway)
 """
 import asyncio
@@ -70,7 +70,7 @@ FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DAY, BIRTH_MONTH, BIRTH_YEAR = range
 
 TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ADMIN_ID = os.environ.get("ADMIN_ID")
-DAILY_LIMIT = int(os.environ.get("DAILY_LIMIT", "5"))
+DAILY_LIMIT = int(os.environ.get("DAILY_LIMIT", "10"))
 
 PERSIAN_MONTHS = [
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
@@ -175,7 +175,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.exception("خطا در بررسی محدودیت روزانه")
         used_today = 0
 
-    if used_today >= DAILY_LIMIT:
+    if used_today >= DAILY_LIMIT and not _is_admin(user.id):
         await target.reply_text(
             f"⛔ شما امروز به سقف {DAILY_LIMIT} محاسبه رسیدی. فردا دوباره امتحان کن."
         )
@@ -379,7 +379,7 @@ async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         used_today = database.count_today(user.id)
     except Exception:
         used_today = 0
-    if used_today >= DAILY_LIMIT:
+    if used_today >= DAILY_LIMIT and not _is_admin(user.id):
         await target.reply_text(
             f"⛔ شما امروز به سقف {DAILY_LIMIT} محاسبه رسیدی. فردا دوباره امتحان کن."
         )
