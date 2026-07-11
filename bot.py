@@ -92,6 +92,7 @@ USER_COMMANDS = [
     ("start", "🌌 محاسبه‌ی جدید"),
     ("menu", "📋 منوی اصلی"),
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
+    ("contacts", "📇 مخاطبین ذخیره‌شده"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
     ("cancel", "❌ لغو مکالمه"),
@@ -146,6 +147,7 @@ def _result_keyboard(data: dict, full_name: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔄 محاسبه جدید", callback_data="new_calc"),
                 InlineKeyboardButton("📜 تاریخچه من", callback_data="show_history"),
             ],
+            [InlineKeyboardButton("💾 ذخیره به‌عنوان مخاطب", callback_data="save_contact")],
             [InlineKeyboardButton("🔗 اشتراک‌گذاری نتیجه", url=share_url)],
         ]
     )
@@ -287,6 +289,12 @@ async def get_birth_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data = calculate_cosmic_report(ud["first_name"], ud["family_name"], ud["mother_name"], jy, jm, jd)
     full_name = f"{ud['first_name']} {ud['family_name']}"
 
+    # برای دکمه‌ی «ذخیره به‌عنوان مخاطب» (حتی اگه بعداً user_data بخشی پاک بشه، این کلید جداست)
+    ud["last_full_profile"] = {
+        "first_name": ud["first_name"], "family_name": ud["family_name"],
+        "mother_name": ud["mother_name"], "jy": jy, "jm": jm, "jd": jd,
+    }
+
     try:
         user = update.effective_user
         database.save_submission(
@@ -316,6 +324,31 @@ async def get_birth_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return ConversationHandler.END
 
 
+async def save_contact_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    profile = context.user_data.get("last_full_profile")
+    if not profile:
+        await query.message.reply_text(
+            "⚠️ اطلاعات این محاسبه دیگه در دسترس نیست (شاید ربات ری‌استارت شده). "
+            "دوباره با /start محاسبه کن، بعد دکمه‌ی ذخیره رو بزن."
+        )
+        return
+    try:
+        database.add_contact(
+            owner_id=update.effective_user.id,
+            first_name=profile["first_name"], family_name=profile["family_name"],
+            mother_name=profile["mother_name"], jy=profile["jy"], jm=profile["jm"], jd=profile["jd"],
+        )
+        await query.message.reply_text(
+            f"✅ «{profile['first_name']} {profile['family_name']}» به مخاطبین ذخیره شد.\n"
+            f"دفعه‌ی بعد توی /compare می‌تونی مستقیم انتخابش کنی."
+        )
+    except Exception:
+        logger.exception("خطا در ذخیره‌ی مخاطب")
+        await query.message.reply_text("مشکلی در ذخیره‌سازی مخاطب پیش اومد.")
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "لغو شد. هر وقت خواستی با /start دوباره شروع کن.",
@@ -334,7 +367,11 @@ async def compare_start_from_button(update: Update, context: ContextTypes.DEFAUL
 
 
 async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
+    # فقط کلیدهای مربوط به مقایسه رو پاک کن، نه کل user_data (مثلاً last_full_profile حفظ بشه)
+    for key in list(context.user_data.keys()):
+        if key.startswith(("p1_", "p2_", "cmp_")):
+            del context.user_data[key]
+
     user = update.effective_user
     target = update.callback_query.message if update.callback_query else update.message
 
@@ -353,7 +390,17 @@ async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except Exception:
         last = None
 
+    try:
+        contacts = database.get_contacts(user.id)
+    except Exception:
+        contacts = []
+
     buttons = [[InlineKeyboardButton("👥 مقایسه‌ی دو نفر جدید", callback_data="cmp_new")]]
+    if last and contacts:
+        buttons.insert(
+            0,
+            [InlineKeyboardButton("📇 من + یکی از مخاطبینم", callback_data="cmp_contact")],
+        )
     if last:
         buttons.insert(
             0,
@@ -369,6 +416,95 @@ async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         reply_markup=InlineKeyboardMarkup(buttons),
     )
     return CMP_CHOICE
+
+
+async def compare_pick_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    last = database.get_last_submission(user.id)
+    if not last:
+        await query.message.reply_text("محاسبه‌ی قبلی‌ای پیدا نشد. با /start اول یه محاسبه انجام بده.")
+        return ConversationHandler.END
+    context.user_data["p1_name"] = f"{last['first_name']} {last['family_name']}"
+    context.user_data["p1_data"] = last
+
+    contacts = database.get_contacts(user.id)
+    if not contacts:
+        await query.message.reply_text("هنوز هیچ مخاطبی ذخیره نکردی.")
+        return ConversationHandler.END
+
+    buttons = [
+        [InlineKeyboardButton(f"{c['first_name']} {c['family_name']}", callback_data=f"contact_{c['id']}")]
+        for c in contacts
+    ]
+    await query.message.reply_text(
+        "کدوم مخاطب رو می‌خوای مقایسه کنی؟", reply_markup=InlineKeyboardMarkup(buttons)
+    )
+    return CMP_CHOICE
+
+
+async def compare_contact_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+
+    contact_id = int(query.data.split("_")[1])
+    contact = database.get_contact(contact_id, user.id)
+    if not contact:
+        await query.message.reply_text("این مخاطب پیدا نشد (شاید حذف شده).")
+        return ConversationHandler.END
+
+    p2_name = f"{contact['first_name']} {contact['family_name']}"
+    p2_data = calculate_cosmic_report(
+        contact["first_name"], contact["family_name"], contact["mother_name"] or "",
+        contact["jalali_year"], contact["jalali_month"], contact["jalali_day"],
+    )
+
+    p1_name = context.user_data.get("p1_name")
+    p1_data = context.user_data.get("p1_data")
+    if not p1_name or not p1_data:
+        await query.message.reply_text("مشکلی پیش اومد، دوباره از /compare شروع کن.")
+        return ConversationHandler.END
+
+    await _finish_compare(query.message, update, context, p1_name, p1_data, p2_name, p2_data)
+    return ConversationHandler.END
+
+
+async def contacts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    try:
+        contacts = database.get_contacts(user.id)
+    except Exception:
+        logger.exception("خطا در خواندن مخاطبین")
+        await update.message.reply_text("مشکلی در خواندن لیست مخاطبین پیش اومد.")
+        return
+
+    if not contacts:
+        await update.message.reply_text(
+            "هنوز هیچ مخاطبی نداری. بعد از هر محاسبه، دکمه‌ی «💾 ذخیره به‌عنوان مخاطب» رو بزن."
+        )
+        return
+
+    buttons = [
+        [InlineKeyboardButton(f"🗑 حذف {c['first_name']} {c['family_name']}", callback_data=f"delcontact_{c['id']}")]
+        for c in contacts
+    ]
+    lines = ["📇 *مخاطبین ذخیره‌شده‌ی تو:*\n"]
+    for c in contacts:
+        lines.append(f"• {c['first_name']} {c['family_name']} — {c['jalali_year']}/{c['jalali_month']}/{c['jalali_day']}")
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def delete_contact_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    contact_id = int(query.data.split("_")[1])
+    ok = database.delete_contact(contact_id, update.effective_user.id)
+    await query.message.reply_text("✅ حذف شد." if ok else "این مخاطب پیدا نشد.")
 
 
 async def compare_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -500,11 +636,17 @@ async def compare_get_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except Exception:
         logger.exception("خطا در ذخیره‌سازی نفر دوم")
 
+    await _finish_compare(update.message, update, context, p1_name, p1_data, p2_name, p2_data)
+    return ConversationHandler.END
+
+
+async def _finish_compare(target_message, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           p1_name: str, p1_data: dict, p2_name: str, p2_data: dict) -> None:
     numeric_text = ai_compare.numeric_overlap_summary(p1_name, p1_data, p2_name, p2_data)
-    await update.message.reply_text(numeric_text, parse_mode="Markdown")
+    await target_message.reply_text(numeric_text, parse_mode="Markdown")
 
     if ai_compare.ai_available():
-        await update.message.reply_text("🤖 در حال تحلیل هوش مصنوعی، چند ثانیه صبر کن...")
+        await target_message.reply_text("🤖 در حال تحلیل هوش مصنوعی، چند ثانیه صبر کن...")
         try:
             analysis = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -512,20 +654,14 @@ async def compare_get_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 ),
                 timeout=35,
             )
-            await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
+            await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
         except Exception as e:
-            # هر خطایی (timeout، اعتبار مالی ناکافی، مشکل شبکه و...) -> جایگزینِ رایگان
             logger.warning("تحلیل AI ناموفق بود (%s: %s)، از نسخه‌ی رایگان استفاده می‌شه", type(e).__name__, e)
             fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
-            await update.message.reply_text(
-                f"🧠 *تحلیل همخونی*\n\n{fallback}",
-                parse_mode="Markdown",
-            )
+            await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
     else:
         fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
-        await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
-
-    return ConversationHandler.END
+        await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -575,6 +711,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/start — شروع محاسبه‌ی جدید\n"
         "/menu — منوی اصلی (دکمه‌ای)\n"
         "/compare — مقایسه با یک نفر دیگر\n"
+        "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -833,7 +970,11 @@ def main() -> None:
             CallbackQueryHandler(compare_start_from_button, pattern="^open_compare$"),
         ],
         states={
-            CMP_CHOICE: [CallbackQueryHandler(compare_choice, pattern="^cmp_(self|new)$")],
+            CMP_CHOICE: [
+                CallbackQueryHandler(compare_choice, pattern="^cmp_(self|new)$"),
+                CallbackQueryHandler(compare_pick_contact, pattern="^cmp_contact$"),
+                CallbackQueryHandler(compare_contact_selected, pattern="^contact_\\d+$"),
+            ],
             CMP_P2_FIRST: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_first_name)],
             CMP_P2_FAMILY: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_family_name)],
             CMP_P2_MOTHER: [
@@ -860,6 +1001,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(help_from_button, pattern="^show_help$"))
     application.add_handler(CallbackQueryHandler(stats_from_button, pattern="^admin_stats$"))
     application.add_handler(CallbackQueryHandler(export_from_button, pattern="^admin_export$"))
+    application.add_handler(CallbackQueryHandler(save_contact_button, pattern="^save_contact$"))
+    application.add_handler(CallbackQueryHandler(delete_contact_button, pattern="^delcontact_\\d+$"))
+    application.add_handler(CommandHandler("contacts", contacts_command))
     application.add_error_handler(global_error_handler)
 
     async def _setup_commands(app: Application) -> None:

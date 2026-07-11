@@ -65,6 +65,24 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                first_name TEXT NOT NULL,
+                family_name TEXT NOT NULL,
+                mother_name TEXT,
+                jalali_year INTEGER NOT NULL,
+                jalali_month INTEGER NOT NULL,
+                jalali_day INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contacts_owner ON contacts(owner_id)"
+        )
 
 
 def touch_user(telegram_id: int, telegram_username: str) -> None:
@@ -155,6 +173,48 @@ def count_today(telegram_id: int) -> int:
             (telegram_id, today),
         ).fetchone()
     return row["c"]
+
+
+def add_contact(owner_id: int, first_name: str, family_name: str, mother_name: str,
+                 jy: int, jm: int, jd: int) -> int:
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO contacts (owner_id, first_name, family_name, mother_name,
+                                   jalali_year, jalali_month, jalali_day, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (owner_id, first_name, family_name, mother_name or "", jy, jm, jd,
+             datetime.now(timezone.utc).isoformat()),
+        )
+    return cur.lastrowid
+
+
+def get_contacts(owner_id: int) -> list:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM contacts WHERE owner_id = ? ORDER BY id DESC",
+            (owner_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_contact(contact_id: int, owner_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM contacts WHERE id = ? AND owner_id = ?",
+            (contact_id, owner_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_contact(contact_id: int, owner_id: int) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM contacts WHERE id = ? AND owner_id = ?",
+            (contact_id, owner_id),
+        )
+    return cur.rowcount > 0
 
 
 def get_last_submission(telegram_id: int) -> dict | None:
