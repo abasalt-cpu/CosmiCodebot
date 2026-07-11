@@ -506,13 +506,23 @@ async def compare_get_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if ai_compare.ai_available():
         await update.message.reply_text("🤖 در حال تحلیل هوش مصنوعی، چند ثانیه صبر کن...")
         try:
-            analysis = await asyncio.to_thread(
-                ai_compare.compare_two_people, p1_name, p1_data, p2_name, p2_data
+            analysis = await asyncio.wait_for(
+                asyncio.to_thread(
+                    ai_compare.compare_two_people, p1_name, p1_data, p2_name, p2_data
+                ),
+                timeout=35,
             )
             await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
-        except Exception:
+        except asyncio.TimeoutError:
+            logger.error("تحلیل هوش مصنوعی بیش از حد طول کشید (timeout)")
+            await update.message.reply_text(
+                "⏱ درخواست به سرور هوش مصنوعی بیش از حد طول کشید و لغو شد. "
+                "احتمالاً مشکل شبکه یا دسترسی سرور به api.anthropic.com هست."
+            )
+        except Exception as e:
             logger.exception("خطا در تحلیل هوش مصنوعی")
-            await update.message.reply_text("مشکلی در دریافت تحلیل هوش مصنوعی پیش اومد.")
+            err_msg = f"مشکلی در دریافت تحلیل هوش مصنوعی پیش اومد.\n`{type(e).__name__}: {e}`"
+            await update.message.reply_text(err_msg, parse_mode="Markdown")
     else:
         await update.message.reply_text(
             "ℹ️ تحلیل هوش مصنوعی فعال نیست (کلید ANTHROPIC_API_KEY تنظیم نشده)."

@@ -18,7 +18,7 @@ from anthropic import Anthropic
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 MODEL = os.environ.get("AI_MODEL", "claude-sonnet-5")
 
-_client = Anthropic(api_key=API_KEY) if API_KEY else None
+_client = Anthropic(api_key=API_KEY, timeout=25.0, max_retries=1) if API_KEY else None
 
 
 def ai_available() -> bool:
