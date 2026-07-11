@@ -44,6 +44,7 @@ from cosmic_logic import calculate_cosmic_report, format_report
 import ai_compare
 import analytics_chart
 import database
+import hafez_fal
 import image_report
 
 LOG_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "logs"
@@ -92,6 +93,7 @@ USER_COMMANDS = [
     ("start", "🌌 محاسبه‌ی جدید"),
     ("menu", "📋 منوی اصلی"),
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
+    ("hafez", "🔮 فال حافظ"),
     ("contacts", "📇 مخاطبین ذخیره‌شده"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
@@ -678,11 +680,44 @@ async def _finish_compare(target_message, update: Update, context: ContextTypes.
     await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}{footer}", parse_mode="Markdown")
 
 
+async def hafez_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "🔮 *فال حافظ*\n\n"
+        "چند لحظه چشم‌هاتو ببند، یه آرزو یا سوال توی دلت نگه‌دار، و بعد نیت کن...\n\n"
+        "وقتی آماده بودی، دکمه رو بزن:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔮 فالم رو بگیر", callback_data="get_hafez")]]
+        ),
+    )
+
+
+async def hafez_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "🔮 *فال حافظ*\n\n"
+        "چند لحظه چشم‌هاتو ببند، یه آرزو یا سوال توی دلت نگه‌دار، و بعد نیت کن...\n\n"
+        "وقتی آماده بودی، دکمه رو بزن:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔮 فالم رو بگیر", callback_data="get_hafez")]]
+        ),
+    )
+
+
+async def hafez_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    ghazal = hafez_fal.get_daily_fal(update.effective_user.id)
+    await query.message.reply_text(hafez_fal.format_fal(ghazal), parse_mode="Markdown")
+
+
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     is_admin = _is_admin(update.effective_user.id)
 
     buttons = [
         [InlineKeyboardButton("🌌 محاسبه‌ی جدید", callback_data="new_calc")],
+        [InlineKeyboardButton("🔮 فال حافظ", callback_data="open_hafez")],
         [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
         [InlineKeyboardButton("🔗 مقایسه با یک نفر دیگر", callback_data="open_compare")],
         [InlineKeyboardButton("ℹ️ راهنما", callback_data="show_help")],
@@ -726,6 +761,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/menu — منوی اصلی (دکمه‌ای)\n"
         "/compare — مقایسه با یک نفر دیگر\n"
         "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
+        "/hafez — فال حافظ روزانه\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -1018,6 +1054,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(save_contact_button, pattern="^save_contact$"))
     application.add_handler(CallbackQueryHandler(delete_contact_button, pattern="^delcontact_\\d+$"))
     application.add_handler(CommandHandler("contacts", contacts_command))
+    application.add_handler(CommandHandler("hafez", hafez_command))
+    application.add_handler(CallbackQueryHandler(hafez_from_button, pattern="^open_hafez$"))
+    application.add_handler(CallbackQueryHandler(hafez_reveal, pattern="^get_hafez$"))
     application.add_error_handler(global_error_handler)
 
     async def _setup_commands(app: Application) -> None:
