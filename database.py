@@ -157,6 +157,23 @@ def count_today(telegram_id: int) -> int:
     return row["c"]
 
 
+def get_last_submission(telegram_id: int) -> dict | None:
+    """کامل‌ترین رکورد آخرین محاسبه‌ی این کاربر (برای قابلیت مقایسه‌ی دو نفر)."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT first_name, family_name, mother_name, jalali_year, jalali_month, jalali_day,
+                   gregorian_date, cosmic_code, destiny_num, fate_num, vibration_num, baten_num
+            FROM submissions
+            WHERE telegram_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (telegram_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_all_submissions() -> list:
     """همه‌ی رکوردها، برای خروجی CSV به ادمین (جدیدترین اول)."""
     with _connect() as conn:

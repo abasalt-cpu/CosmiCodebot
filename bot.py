@@ -41,6 +41,7 @@ from telegram.ext import (
 )
 
 from cosmic_logic import calculate_cosmic_report, format_report
+import ai_compare
 import analytics_chart
 import database
 import image_report
@@ -60,6 +61,12 @@ logger = logging.getLogger(__name__)
 
 # --- مراحل مکالمه ---
 FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DAY, BIRTH_MONTH, BIRTH_YEAR = range(6)
+
+# --- مراحل مکالمه‌ی «مقایسه‌ی دو نفر» ---
+(
+    CMP_CHOICE, CMP_P2_FIRST, CMP_P2_FAMILY, CMP_P2_MOTHER,
+    CMP_P2_DAY, CMP_P2_MONTH, CMP_P2_YEAR,
+) = range(100, 107)
 
 TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ADMIN_ID = os.environ.get("ADMIN_ID")
@@ -84,6 +91,7 @@ MONTH_KEYBOARD = InlineKeyboardMarkup(
 USER_COMMANDS = [
     ("start", "🌌 محاسبه‌ی جدید"),
     ("menu", "📋 منوی اصلی"),
+    ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
     ("cancel", "❌ لغو مکالمه"),
@@ -316,12 +324,210 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+# ---------------------------------------------------------------------------
+# مقایسه‌ی دو نفر
+# ---------------------------------------------------------------------------
+
+async def compare_start_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    return await compare_start(update, context)
+
+
+async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
+    user = update.effective_user
+    target = update.callback_query.message if update.callback_query else update.message
+
+    try:
+        used_today = database.count_today(user.id)
+    except Exception:
+        used_today = 0
+    if used_today >= DAILY_LIMIT:
+        await target.reply_text(
+            f"⛔ شما امروز به سقف {DAILY_LIMIT} محاسبه رسیدی. فردا دوباره امتحان کن."
+        )
+        return ConversationHandler.END
+
+    try:
+        last = database.get_last_submission(user.id)
+    except Exception:
+        last = None
+
+    buttons = [[InlineKeyboardButton("👥 مقایسه‌ی دو نفر جدید", callback_data="cmp_new")]]
+    if last:
+        buttons.insert(
+            0,
+            [InlineKeyboardButton(
+                f"🔁 مقایسه با آخرین محاسبه‌ی خودم ({last['first_name']})",
+                callback_data="cmp_self",
+            )],
+        )
+
+    await target.reply_text(
+        "🔗 *مقایسه‌ی دو نفر*\n\nچطور می‌خوای مقایسه کنی؟",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return CMP_CHOICE
+
+
+async def compare_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cmp_self":
+        last = database.get_last_submission(update.effective_user.id)
+        if not last:
+            await query.message.reply_text("محاسبه‌ی قبلی‌ای پیدا نشد. با /start اول یه محاسبه انجام بده.")
+            return ConversationHandler.END
+        context.user_data["p1_name"] = f"{last['first_name']} {last['family_name']}"
+        context.user_data["p1_data"] = last
+        await query.message.reply_text("نام نفر دوم؟")
+        return CMP_P2_FIRST
+
+    await query.message.reply_text("باشه، اول اطلاعات *نفر اول* رو می‌گیرم.\n\nنام نفر اول؟", parse_mode="Markdown")
+    context.user_data["cmp_stage"] = "p1"
+    return CMP_P2_FIRST
+
+
+async def compare_get_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
+        return CMP_P2_FIRST
+    stage = context.user_data.get("cmp_stage", "p2")
+    context.user_data[f"{stage}_first_name"] = clean
+    await update.message.reply_text("نام خانوادگی؟")
+    return CMP_P2_FAMILY
+
+
+async def compare_get_family_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
+        return CMP_P2_FAMILY
+    stage = context.user_data.get("cmp_stage", "p2")
+    context.user_data[f"{stage}_family_name"] = clean
+    await update.message.reply_text(
+        "نام مادر؟ (جهت تعیین پایگاه اجتماعی)",
+        reply_markup=SKIP_MOTHER_KEYBOARD,
+    )
+    return CMP_P2_MOTHER
+
+
+async def compare_get_mother_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه، یا دکمه‌ی «رد کردن» رو بزن:")
+        return CMP_P2_MOTHER
+    stage = context.user_data.get("cmp_stage", "p2")
+    context.user_data[f"{stage}_mother_name"] = clean
+    await update.message.reply_text("روز تولد (شمسی) رو به عدد بفرست:")
+    return CMP_P2_DAY
+
+
+async def compare_skip_mother(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    stage = context.user_data.get("cmp_stage", "p2")
+    context.user_data[f"{stage}_mother_name"] = None
+    await update.callback_query.message.reply_text("روز تولد (شمسی) رو به عدد بفرست:")
+    return CMP_P2_DAY
+
+
+async def compare_get_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if not (text.isdigit() and 1 <= int(text) <= 31):
+        await update.message.reply_text("❌ عدد روز باید بین ۱ تا ۳۱ باشه. دوباره بفرست:")
+        return CMP_P2_DAY
+    stage = context.user_data.get("cmp_stage", "p2")
+    context.user_data[f"{stage}_jd"] = int(text)
+    await update.message.reply_text("ماه تولد رو انتخاب کن:", reply_markup=MONTH_KEYBOARD)
+    return CMP_P2_MONTH
+
+
+async def compare_get_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    stage = context.user_data.get("cmp_stage", "p2")
+    month_num = int(query.data.split("_")[1])
+    context.user_data[f"{stage}_jm"] = month_num
+    await query.message.reply_text(
+        f"ماه انتخابی: {PERSIAN_MONTHS[month_num - 1]} ✅\n\nسال تولد (شمسی) رو به عدد بفرست:"
+    )
+    return CMP_P2_YEAR
+
+
+async def compare_get_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if not (text.isdigit() and 1300 <= int(text) <= 1420):
+        await update.message.reply_text("❌ سال باید بین ۱۳۰۰ تا ۱۴۲۰ باشه. دوباره بفرست:")
+        return CMP_P2_YEAR
+
+    ud = context.user_data
+    stage = ud.get("cmp_stage", "p2")
+    ud[f"{stage}_jy"] = int(text)
+
+    report = calculate_cosmic_report(
+        ud[f"{stage}_first_name"], ud[f"{stage}_family_name"],
+        ud.get(f"{stage}_mother_name") or "",
+        ud[f"{stage}_jy"], ud[f"{stage}_jm"], ud[f"{stage}_jd"],
+    )
+    full_name = f"{ud[f'{stage}_first_name']} {ud[f'{stage}_family_name']}"
+
+    if stage == "p1":
+        ud["p1_name"] = full_name
+        ud["p1_data"] = report
+        ud["cmp_stage"] = "p2"
+        await update.message.reply_text("عالی! حالا اطلاعات *نفر دوم* رو می‌گیرم.\n\nنام نفر دوم؟", parse_mode="Markdown")
+        return CMP_P2_FIRST
+
+    # اگه به اینجا رسیدیم، یعنی نفر دوم کامل شد و نفر اول یا از قبل ست شده (cmp_self) یا p1 هست
+    p1_name = ud["p1_name"]
+    p1_data = ud["p1_data"]
+    p2_name = full_name
+    p2_data = report
+
+    # ذخیره‌ی محاسبه‌ی نفر دوم هم در دیتابیس (اگه نفر جدید بود)
+    try:
+        user = update.effective_user
+        database.save_submission(
+            telegram_id=user.id, telegram_username=user.username or "",
+            first_name=ud[f"{stage}_first_name"], family_name=ud[f"{stage}_family_name"],
+            mother_name=ud.get(f"{stage}_mother_name") or "",
+            jy=ud[f"{stage}_jy"], jm=ud[f"{stage}_jm"], jd=ud[f"{stage}_jd"],
+            report=report,
+        )
+    except Exception:
+        logger.exception("خطا در ذخیره‌سازی نفر دوم")
+
+    numeric_text = ai_compare.numeric_overlap_summary(p1_name, p1_data, p2_name, p2_data)
+    await update.message.reply_text(numeric_text, parse_mode="Markdown")
+
+    if ai_compare.ai_available():
+        await update.message.reply_text("🤖 در حال تحلیل هوش مصنوعی، چند ثانیه صبر کن...")
+        try:
+            analysis = await asyncio.to_thread(
+                ai_compare.compare_two_people, p1_name, p1_data, p2_name, p2_data
+            )
+            await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
+        except Exception:
+            logger.exception("خطا در تحلیل هوش مصنوعی")
+            await update.message.reply_text("مشکلی در دریافت تحلیل هوش مصنوعی پیش اومد.")
+    else:
+        await update.message.reply_text(
+            "ℹ️ تحلیل هوش مصنوعی فعال نیست (کلید ANTHROPIC_API_KEY تنظیم نشده)."
+        )
+
+    return ConversationHandler.END
+
+
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     is_admin = _is_admin(update.effective_user.id)
 
     buttons = [
         [InlineKeyboardButton("🌌 محاسبه‌ی جدید", callback_data="new_calc")],
         [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
+        [InlineKeyboardButton("🔗 مقایسه با یک نفر دیگر", callback_data="open_compare")],
         [InlineKeyboardButton("ℹ️ راهنما", callback_data="show_help")],
     ]
     if is_admin:
@@ -361,6 +567,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "🌌 *راهنمای ربات عدد کیهانی*\n\n"
         "/start — شروع محاسبه‌ی جدید\n"
         "/menu — منوی اصلی (دکمه‌ای)\n"
+        "/compare — مقایسه با یک نفر دیگر\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -612,6 +819,28 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
+
+    compare_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("compare", compare_start),
+            CallbackQueryHandler(compare_start_from_button, pattern="^open_compare$"),
+        ],
+        states={
+            CMP_CHOICE: [CallbackQueryHandler(compare_choice, pattern="^cmp_(self|new)$")],
+            CMP_P2_FIRST: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_first_name)],
+            CMP_P2_FAMILY: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_family_name)],
+            CMP_P2_MOTHER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_mother_name),
+                CallbackQueryHandler(compare_skip_mother, pattern="^skip_mother$"),
+            ],
+            CMP_P2_DAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_day)],
+            CMP_P2_MONTH: [CallbackQueryHandler(compare_get_month, pattern="^month_")],
+            CMP_P2_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_year)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(compare_handler)
+
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("history", history_command))
