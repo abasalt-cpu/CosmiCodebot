@@ -138,9 +138,7 @@ def rule_based_analysis(name1: str, data1: dict, name2: str, data2: dict) -> str
         f"*{headline}* (امتیاز همخونی تقریبی: {score}/۱۰)\n\n"
         f"{body}\n\n"
         f"ویژگی محوری {name1}: {t1}\n"
-        f"ویژگی محوری {name2}: {t2}\n\n"
-        f"_(این تحلیل بر پایه‌ی قواعد ساده تولید شده، نه هوش مصنوعی. "
-        f"برای تحلیل عمیق‌تر، کلید Anthropic API رو شارژ کن.)_"
+        f"ویژگی محوری {name2}: {t2}"
     )
 
 

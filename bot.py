@@ -645,6 +645,8 @@ async def _finish_compare(target_message, update: Update, context: ContextTypes.
     numeric_text = ai_compare.numeric_overlap_summary(p1_name, p1_data, p2_name, p2_data)
     await target_message.reply_text(numeric_text, parse_mode="Markdown")
 
+    is_admin_user = _is_admin(update.effective_user.id)
+
     if ai_compare.ai_available():
         await target_message.reply_text("🤖 در حال تحلیل هوش مصنوعی، چند ثانیه صبر کن...")
         try:
@@ -655,13 +657,25 @@ async def _finish_compare(target_message, update: Update, context: ContextTypes.
                 timeout=35,
             )
             await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
+            return
         except Exception as e:
             logger.warning("تحلیل AI ناموفق بود (%s: %s)، از نسخه‌ی رایگان استفاده می‌شه", type(e).__name__, e)
             fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
-            await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
-    else:
-        fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
-        await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
+            footer = (
+                f"\n\n_(⚠️ ادمین: تحلیل AI ناموفق بود — {type(e).__name__}: {e})_"
+                if is_admin_user else
+                "\n\n_(این یک تحلیل عمومی بر پایه‌ی اعداد است.)_"
+            )
+            await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}{footer}", parse_mode="Markdown")
+            return
+
+    fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
+    footer = (
+        "\n\n_(⚠️ ادمین: تحلیل هوش مصنوعی فعال نیست چون ANTHROPIC_API_KEY تنظیم نشده.)_"
+        if is_admin_user else
+        "\n\n_(این یک تحلیل عمومی بر پایه‌ی اعداد است.)_"
+    )
+    await target_message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}{footer}", parse_mode="Markdown")
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
