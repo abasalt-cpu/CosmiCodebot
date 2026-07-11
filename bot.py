@@ -46,6 +46,7 @@ import analytics_chart
 import database
 import hafez_fal
 import image_report
+import zodiac
 
 LOG_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -94,6 +95,7 @@ USER_COMMANDS = [
     ("menu", "📋 منوی اصلی"),
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("hafez", "🔮 فال حافظ"),
+    ("zodiac", "♈️ طالع‌بینی امروز"),
     ("contacts", "📇 مخاطبین ذخیره‌شده"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
@@ -693,6 +695,46 @@ async def hafez_from_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+ZODIAC_MONTH_KEYBOARD = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton(PERSIAN_MONTHS[i], callback_data=f"zmonth_{i + 1}"),
+            InlineKeyboardButton(PERSIAN_MONTHS[i + 1], callback_data=f"zmonth_{i + 2}"),
+        ]
+        for i in range(0, 12, 2)
+    ]
+)
+
+
+async def zodiac_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.callback_query.message if update.callback_query else update.message
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    last = None
+    try:
+        last = database.get_last_submission(update.effective_user.id)
+    except Exception:
+        pass
+
+    if last:
+        await target.reply_text(
+            zodiac.format_horoscope(last["jalali_month"]), parse_mode="Markdown"
+        )
+    else:
+        await target.reply_text(
+            "ماه تولد شمسی‌ت رو انتخاب کن تا برجت رو پیدا کنم:",
+            reply_markup=ZODIAC_MONTH_KEYBOARD,
+        )
+
+
+async def zodiac_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    await query.message.reply_text(zodiac.format_horoscope(month_num), parse_mode="Markdown")
+
+
 async def hafez_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🔮 *فال حافظ*\n\n"
@@ -718,6 +760,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     buttons = [
         [InlineKeyboardButton("🌌 محاسبه‌ی جدید", callback_data="new_calc")],
         [InlineKeyboardButton("🔮 فال حافظ", callback_data="open_hafez")],
+        [InlineKeyboardButton("♈️ طالع‌بینی امروز", callback_data="open_zodiac")],
         [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
         [InlineKeyboardButton("🔗 مقایسه با یک نفر دیگر", callback_data="open_compare")],
         [InlineKeyboardButton("ℹ️ راهنما", callback_data="show_help")],
@@ -762,6 +805,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/compare — مقایسه با یک نفر دیگر\n"
         "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
         "/hafez — فال حافظ روزانه\n"
+        "/zodiac — طالع‌بینی امروز\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -1055,6 +1099,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(delete_contact_button, pattern="^delcontact_\\d+$"))
     application.add_handler(CommandHandler("contacts", contacts_command))
     application.add_handler(CommandHandler("hafez", hafez_command))
+    application.add_handler(CommandHandler("zodiac", zodiac_command))
+    application.add_handler(CallbackQueryHandler(zodiac_command, pattern="^open_zodiac$"))
+    application.add_handler(CallbackQueryHandler(zodiac_month_selected, pattern="^zmonth_\\d+$"))
     application.add_handler(CallbackQueryHandler(hafez_from_button, pattern="^open_hafez$"))
     application.add_handler(CallbackQueryHandler(hafez_reveal, pattern="^get_hafez$"))
     application.add_error_handler(global_error_handler)
