@@ -513,20 +513,17 @@ async def compare_get_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 timeout=35,
             )
             await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{analysis}", parse_mode="Markdown")
-        except asyncio.TimeoutError:
-            logger.error("تحلیل هوش مصنوعی بیش از حد طول کشید (timeout)")
-            await update.message.reply_text(
-                "⏱ درخواست به سرور هوش مصنوعی بیش از حد طول کشید و لغو شد. "
-                "احتمالاً مشکل شبکه یا دسترسی سرور به api.anthropic.com هست."
-            )
         except Exception as e:
-            logger.exception("خطا در تحلیل هوش مصنوعی")
-            err_msg = f"مشکلی در دریافت تحلیل هوش مصنوعی پیش اومد.\n`{type(e).__name__}: {e}`"
-            await update.message.reply_text(err_msg, parse_mode="Markdown")
+            # هر خطایی (timeout، اعتبار مالی ناکافی، مشکل شبکه و...) -> جایگزینِ رایگان
+            logger.warning("تحلیل AI ناموفق بود (%s: %s)، از نسخه‌ی رایگان استفاده می‌شه", type(e).__name__, e)
+            fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
+            await update.message.reply_text(
+                f"🧠 *تحلیل همخونی*\n\n{fallback}",
+                parse_mode="Markdown",
+            )
     else:
-        await update.message.reply_text(
-            "ℹ️ تحلیل هوش مصنوعی فعال نیست (کلید ANTHROPIC_API_KEY تنظیم نشده)."
-        )
+        fallback = ai_compare.rule_based_analysis(p1_name, p1_data, p2_name, p2_data)
+        await update.message.reply_text(f"🧠 *تحلیل همخونی*\n\n{fallback}", parse_mode="Markdown")
 
     return ConversationHandler.END
 
