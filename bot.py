@@ -751,10 +751,11 @@ async def zodiac_month_selected(update: Update, context: ContextTypes.DEFAULT_TY
 def _build_city_keyboard() -> InlineKeyboardMarkup:
     keys = list(natal_chart.CITIES.keys())
     rows = []
-    for i in range(0, len(keys), 2):
-        row = [InlineKeyboardButton(natal_chart.CITIES[keys[i]]["display_name"], callback_data=f"city_{keys[i]}")]
-        if i + 1 < len(keys):
-            row.append(InlineKeyboardButton(natal_chart.CITIES[keys[i + 1]]["display_name"], callback_data=f"city_{keys[i + 1]}"))
+    for i in range(0, len(keys), 4):
+        row = [
+            InlineKeyboardButton(natal_chart.CITIES[k]["display_name"], callback_data=f"city_{k}")
+            for k in keys[i:i + 4]
+        ]
         rows.append(row)
     return InlineKeyboardMarkup(rows)
 
