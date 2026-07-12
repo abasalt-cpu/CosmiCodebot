@@ -40,12 +40,13 @@ from telegram.ext import (
     filters,
 )
 
-from cosmic_logic import calculate_cosmic_report, format_report
+from cosmic_logic import calculate_cosmic_report, format_report, jalali_to_gregorian
 import ai_compare
 import analytics_chart
 import database
 import hafez_fal
 import image_report
+import natal_chart
 import zodiac
 
 LOG_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "logs"
@@ -69,6 +70,9 @@ FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DAY, BIRTH_MONTH, BIRTH_YEAR = range
     CMP_CHOICE, CMP_P2_FIRST, CMP_P2_FAMILY, CMP_P2_MOTHER,
     CMP_P2_DAY, CMP_P2_MONTH, CMP_P2_YEAR,
 ) = range(100, 107)
+
+# --- مراحل مکالمه‌ی «زایچه‌ی تقریبی» ---
+NATAL_HOUR, NATAL_MINUTE, NATAL_CITY = range(200, 203)
 
 TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ADMIN_ID = os.environ.get("ADMIN_ID")
@@ -96,6 +100,7 @@ USER_COMMANDS = [
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("hafez", "🔮 فال حافظ"),
     ("zodiac", "♈️ طالع‌بینی امروز"),
+    ("natal", "🌌 زایچه‌ی تقریبی"),
     ("contacts", "📇 مخاطبین ذخیره‌شده"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
@@ -649,6 +654,14 @@ async def _finish_compare(target_message, update: Update, context: ContextTypes.
     numeric_text = ai_compare.numeric_overlap_summary(p1_name, p1_data, p2_name, p2_data)
     await target_message.reply_text(numeric_text, parse_mode="Markdown")
 
+    try:
+        m1 = p1_data.get("solar_num") or p1_data.get("jalali_month")
+        m2 = p2_data.get("solar_num") or p2_data.get("jalali_month")
+        zodiac_text = zodiac.compatibility(m1, m2)
+        await target_message.reply_text(zodiac_text, parse_mode="Markdown")
+    except Exception:
+        logger.exception("خطا در محاسبه‌ی هم‌خونی بروج")
+
     is_admin_user = _is_admin(update.effective_user.id)
 
     if ai_compare.ai_available():
@@ -735,6 +748,85 @@ async def zodiac_month_selected(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(zodiac.format_horoscope(month_num), parse_mode="Markdown")
 
 
+def _build_city_keyboard() -> InlineKeyboardMarkup:
+    keys = list(natal_chart.CITIES.keys())
+    rows = []
+    for i in range(0, len(keys), 2):
+        row = [InlineKeyboardButton(natal_chart.CITIES[keys[i]]["display_name"], callback_data=f"city_{keys[i]}")]
+        if i + 1 < len(keys):
+            row.append(InlineKeyboardButton(natal_chart.CITIES[keys[i + 1]]["display_name"], callback_data=f"city_{keys[i + 1]}"))
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+CITY_KEYBOARD = _build_city_keyboard()
+
+
+async def natal_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    try:
+        last = database.get_last_submission(user.id)
+    except Exception:
+        last = None
+
+    if not last:
+        await update.message.reply_text(
+            "برای محاسبه‌ی زایچه، اول باید یه‌بار عدد کیهانی‌ت رو با /start محاسبه کنی "
+            "(چون از همون تاریخ تولد استفاده می‌کنیم)."
+        )
+        return ConversationHandler.END
+
+    context.user_data["natal_jy"] = last["jalali_year"]
+    context.user_data["natal_jm"] = last["jalali_month"]
+    context.user_data["natal_jd"] = last["jalali_day"]
+
+    await update.message.reply_text(
+        "🌌 برای محاسبه‌ی زایچه‌ی تقریبی، به ساعت و محل تولدت هم نیاز دارم.\n\n"
+        "ساعت تولدت چند بود؟ (فقط عدد ساعت، ۰ تا ۲۳ — اگه دقیق نمی‌دونی، تقریبی بفرست)"
+    )
+    return NATAL_HOUR
+
+
+async def natal_get_hour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if not (text.isdigit() and 0 <= int(text) <= 23):
+        await update.message.reply_text("❌ ساعت باید بین ۰ تا ۲۳ باشه. دوباره بفرست:")
+        return NATAL_HOUR
+    context.user_data["natal_hour"] = int(text)
+    await update.message.reply_text("دقیقه‌ی تولد؟ (۰ تا ۵۹، اگه نمی‌دونی بنویس 0)")
+    return NATAL_MINUTE
+
+
+async def natal_get_minute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if not (text.isdigit() and 0 <= int(text) <= 59):
+        await update.message.reply_text("❌ دقیقه باید بین ۰ تا ۵۹ باشه. دوباره بفرست:")
+        return NATAL_MINUTE
+    context.user_data["natal_minute"] = int(text)
+    await update.message.reply_text("شهر تولدت رو انتخاب کن:", reply_markup=CITY_KEYBOARD)
+    return NATAL_CITY
+
+
+async def natal_get_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    city_key = query.data.split("_", 1)[1]
+
+    ud = context.user_data
+    gy, gm, gd = jalali_to_gregorian(ud["natal_jy"], ud["natal_jm"], ud["natal_jd"])
+
+    try:
+        result = natal_chart.calculate_natal(
+            gy, gm, gd, ud["natal_hour"], ud["natal_minute"], city_key
+        )
+        await query.message.reply_text(natal_chart.format_natal(result), parse_mode="Markdown")
+    except Exception:
+        logger.exception("خطا در محاسبه‌ی زایچه")
+        await query.message.reply_text("مشکلی در محاسبه‌ی زایچه پیش اومد.")
+
+    return ConversationHandler.END
+
+
 async def hafez_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🔮 *فال حافظ*\n\n"
@@ -806,6 +898,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
         "/hafez — فال حافظ روزانه\n"
         "/zodiac — طالع‌بینی امروز\n"
+        "/natal — زایچه‌ی تقریبی (خورشید+ماه+طالع)\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -1082,6 +1175,17 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     application.add_handler(compare_handler)
+
+    natal_handler = ConversationHandler(
+        entry_points=[CommandHandler("natal", natal_start)],
+        states={
+            NATAL_HOUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, natal_get_hour)],
+            NATAL_MINUTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, natal_get_minute)],
+            NATAL_CITY: [CallbackQueryHandler(natal_get_city, pattern="^city_")],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(natal_handler)
 
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
