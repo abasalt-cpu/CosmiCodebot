@@ -217,6 +217,16 @@ def delete_contact(contact_id: int, owner_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def get_todays_birthday_contacts(jalali_month: int, jalali_day: int) -> list:
+    """همه‌ی مخاطبینِ همه‌ی کاربرها که امروز (شمسی) تولدشونه."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM contacts WHERE jalali_month = ? AND jalali_day = ?",
+            (jalali_month, jalali_day),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_last_submission(telegram_id: int) -> dict | None:
     """کامل‌ترین رکورد آخرین محاسبه‌ی این کاربر (برای قابلیت مقایسه‌ی دو نفر)."""
     with _connect() as conn:

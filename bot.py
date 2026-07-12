@@ -17,7 +17,7 @@ import logging
 import os
 import re
 import urllib.parse
-from datetime import time as dt_time
+from datetime import time as dt_time, datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -40,7 +40,7 @@ from telegram.ext import (
     filters,
 )
 
-from cosmic_logic import calculate_cosmic_report, format_report, jalali_to_gregorian
+from cosmic_logic import calculate_cosmic_report, format_report, jalali_to_gregorian, gregorian_to_jalali
 import ai_compare
 import analytics_chart
 import database
@@ -1103,6 +1103,36 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("✅ رفع مسدودی شد." if ok else "کاربری با این آیدی پیدا نشد.")
 
 
+async def birthday_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """هر روز چک می‌کنه امروز تولد کدوم مخاطبین (از هر کاربر) هست و بهشون خبر می‌ده."""
+    try:
+        now = datetime.now(timezone.utc)
+        jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+        contacts = database.get_todays_birthday_contacts(jm, jd)
+    except Exception:
+        logger.exception("خطا در بررسی تولدهای امروز")
+        return
+
+    for c in contacts:
+        try:
+            report = calculate_cosmic_report(
+                c["first_name"], c["family_name"], c["mother_name"] or "",
+                c["jalali_year"], c["jalali_month"], c["jalali_day"],
+            )
+            await context.bot.send_message(
+                chat_id=c["owner_id"],
+                text=(
+                    f"🎂 *یادآوری تولد*\n\n"
+                    f"امروز تولد «{c['first_name']} {c['family_name']}» هست!\n\n"
+                    f"عدد سرنوشتش: {report['destiny_num']} | عدد خورشیدیش: {report['solar_num']}\n\n"
+                    f"یه پیام تبریک بفرست 🎉"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            logger.exception("خطا در ارسال یادآور تولد به کاربر %s", c["owner_id"])
+
+
 async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """هر شب فایل دیتابیس رو برای ادمین می‌فرسته (چون دیسک Railway ممکنه پایدار نباشه)."""
     if not ADMIN_ID:
@@ -1244,8 +1274,10 @@ def main() -> None:
 
     application.post_init = _setup_commands
 
-    if application.job_queue is not None and ADMIN_ID:
-        application.job_queue.run_daily(daily_backup_job, time=dt_time(hour=23, minute=55))
+    if application.job_queue is not None:
+        application.job_queue.run_daily(birthday_reminder_job, time=dt_time(hour=6, minute=0))
+        if ADMIN_ID:
+            application.job_queue.run_daily(daily_backup_job, time=dt_time(hour=23, minute=55))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

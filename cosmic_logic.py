@@ -150,6 +150,44 @@ def jalali_to_gregorian(jy: int, jm: int, jd: int):
     return gy, gm, gd
 
 
+def gregorian_to_jalali(gy: int, gm: int, gd: int):
+    """تبدیل تاریخ میلادی به شمسی (الگوریتم استاندارد جهانی، معکوس jalali_to_gregorian)."""
+    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if (gy % 4 == 0 and gy % 100 != 0) or (gy % 400 == 0):
+        g_days_in_month[1] = 29
+
+    gy2 = gy - 1600
+    gm2 = gm - 1
+    gd2 = gd - 1
+
+    g_day_no = 365 * gy2 + (gy2 + 3) // 4 - (gy2 + 99) // 100 + (gy2 + 399) // 400
+    for i in range(gm2):
+        g_day_no += g_days_in_month[i]
+    g_day_no += gd2
+
+    j_day_no = g_day_no - 79
+
+    j_np = j_day_no // 12053
+    j_day_no %= 12053
+
+    jy = 979 + 33 * j_np + 4 * (j_day_no // 1461)
+    j_day_no %= 1461
+
+    if j_day_no >= 366:
+        jy += (j_day_no - 1) // 365
+        j_day_no = (j_day_no - 1) % 365
+
+    j_days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]
+    i = 0
+    while i < 11 and j_day_no >= j_days_in_month[i]:
+        j_day_no -= j_days_in_month[i]
+        i += 1
+    jm = i + 1
+    jd = j_day_no + 1
+
+    return jy, jm, jd
+
+
 def abjad_kabir(text: str) -> int:
     """جمع کل ارزش ابجد یک نام (کبیر، خام - بدون کاهش)."""
     text = re.sub(r"[\u200c\s]+", "", text or "")
