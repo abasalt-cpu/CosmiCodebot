@@ -20,6 +20,8 @@ import json
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(BASE_DIR, "iran_cities.json"), encoding="utf-8") as f:
     CITIES = json.load(f)
+with open(os.path.join(BASE_DIR, "natal_interpretations.json"), encoding="utf-8") as f:
+    _INTERPRETATIONS = json.load(f)
 
 IRAN_UTC_OFFSET = 3.5  # ساعت (بدون تغییر فصلی، از ۱۴۰۱ به بعد)
 
@@ -150,15 +152,13 @@ def calculate_natal(gy: int, gm: int, gd: int, hour: int, minute: int, city_key:
 
 
 def format_natal(result: dict) -> str:
+    sun_text = _INTERPRETATIONS["sun"][result["sun_sign"]]
+    moon_text = _INTERPRETATIONS["moon"][result["moon_sign"]]
+    asc_text = _INTERPRETATIONS["asc"][result["asc_sign"]]
     return (
         "🌌 *زایچه‌ی تقریبی شما*\n\n"
-        f"☀️ *برج خورشید (آفتاب):* {result['sun_sign']}\n"
-        f"_شخصیت اصلی و هویت آگاهانه‌تون_\n\n"
-        f"🌙 *برج ماه:* {result['moon_sign']}\n"
-        f"_دنیای احساسی و درونی‌تون_\n\n"
-        f"⬆️ *طالع (صعودی):* {result['asc_sign']}\n"
-        f"_تصویری که به دنیا نشون می‌دین، نگاه اول دیگران بهتون_\n\n"
-        f"📍 محل تولد: {result['city']}\n\n"
-        "_(این یک زایچه‌ی تقریبیه با فرمول‌های نجومی کم‌دقت؛ برای تحلیل دقیق حرفه‌ای، "
-        "یک زایچه‌ی کامل با نرم‌افزار تخصصی توصیه می‌شه.)_"
+        f"☀️ *برج خورشید (آفتاب): {result['sun_sign']}*\n{sun_text}\n\n"
+        f"🌙 *برج ماه: {result['moon_sign']}*\n{moon_text}\n\n"
+        f"⬆️ *طالع (صعودی): {result['asc_sign']}*\n{asc_text}\n\n"
+        f"📍 محل تولد: {result['city']}"
     )
