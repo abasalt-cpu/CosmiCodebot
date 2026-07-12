@@ -25,11 +25,22 @@ def get_daily_fal(telegram_id: int) -> dict:
     return _GHAZALS[index]
 
 
+def get_ghazal_by_id(ghazal_id: int) -> dict | None:
+    for g in _GHAZALS:
+        if g["id"] == ghazal_id:
+            return g
+    return None
+
+
 def format_fal(ghazal: dict) -> str:
     verses_text = "\n".join(ghazal["verses"])
     return (
         "🔮 *فال امروز شما*\n\n"
         f"_{verses_text}_\n\n"
-        f"📖 *تفسیر:*\n{ghazal['interpretation']}\n\n"
-        "_(فال حافظ صرفاً برای سرگرمی و الهام‌گیریه، نه پیش‌گویی قطعی 🌙)_"
+        f"📖 *تفسیر:*\n{ghazal['interpretation']}"
     )
+
+
+def format_full_ghazal(ghazal: dict) -> str:
+    verses_text = "\n".join(ghazal.get("full_verses", ghazal["verses"]))
+    return f"📜 *غزل شماره‌ی {ghazal['id']} حافظ*\n\n_{verses_text}_"

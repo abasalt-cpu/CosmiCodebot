@@ -844,7 +844,24 @@ async def hafez_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     await query.answer()
     ghazal = hafez_fal.get_daily_fal(update.effective_user.id)
-    await query.message.reply_text(hafez_fal.format_fal(ghazal), parse_mode="Markdown")
+    await query.message.reply_text(
+        hafez_fal.format_fal(ghazal),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📜 نمایش کل غزل", callback_data=f"hafezfull_{ghazal['id']}")]]
+        ),
+    )
+
+
+async def hafez_show_full(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    ghazal_id = int(query.data.split("_")[1])
+    ghazal = hafez_fal.get_ghazal_by_id(ghazal_id)
+    if not ghazal:
+        await query.message.reply_text("این غزل پیدا نشد.")
+        return
+    await query.message.reply_text(hafez_fal.format_full_ghazal(ghazal), parse_mode="Markdown")
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1209,6 +1226,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(zodiac_month_selected, pattern="^zmonth_\\d+$"))
     application.add_handler(CallbackQueryHandler(hafez_from_button, pattern="^open_hafez$"))
     application.add_handler(CallbackQueryHandler(hafez_reveal, pattern="^get_hafez$"))
+    application.add_handler(CallbackQueryHandler(hafez_show_full, pattern="^hafezfull_\\d+$"))
     application.add_error_handler(global_error_handler)
 
     async def _setup_commands(app: Application) -> None:
