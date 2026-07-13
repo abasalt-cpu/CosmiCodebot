@@ -43,6 +43,7 @@ from telegram.ext import (
 from cosmic_logic import calculate_cosmic_report, format_report, jalali_to_gregorian, gregorian_to_jalali
 import ai_compare
 import analytics_chart
+import baby_name
 import database
 import hafez_fal
 import image_report
@@ -74,6 +75,9 @@ FIRST_NAME, FAMILY_NAME, MOTHER_NAME, BIRTH_DAY, BIRTH_MONTH, BIRTH_YEAR = range
 # --- مراحل مکالمه‌ی «زایچه‌ی تقریبی» ---
 NATAL_HOUR, NATAL_MINUTE, NATAL_CITY = range(200, 203)
 
+# --- مراحل مکالمه‌ی «پیشنهاد اسم فرزند» ---
+BABY_GENDER, BABY_FAMILY, BABY_MOTHER, BABY_STATUS, BABY_INCOME = range(300, 305)
+
 TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 DAILY_LIMIT = int(os.environ.get("DAILY_LIMIT", "10"))
@@ -101,6 +105,7 @@ USER_COMMANDS = [
     ("hafez", "🔮 فال حافظ"),
     ("zodiac", "♈️ طالع‌بینی امروز"),
     ("natal", "🌌 زایچه‌ی تقریبی"),
+    ("babyname", "👶 پیشنهاد اسم فرزند"),
     ("contacts", "📇 مخاطبین ذخیره‌شده"),
     ("history", "📜 تاریخچه‌ی من"),
     ("help", "ℹ️ راهنما"),
@@ -828,6 +833,114 @@ async def natal_get_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return ConversationHandler.END
 
 
+# ---------------------------------------------------------------------------
+# پیشنهاد اسم فرزند
+# ---------------------------------------------------------------------------
+
+async def babyname_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "👶 *پیشنهاد اسم فرزند*\n\n"
+        "جنسیت فرزند رو انتخاب کن:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton("👦 پسر", callback_data="baby_boy"),
+                InlineKeyboardButton("👧 دختر", callback_data="baby_girl"),
+            ]]
+        ),
+    )
+    return BABY_GENDER
+
+
+async def babyname_get_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["baby_gender"] = "boy" if query.data == "baby_boy" else "girl"
+
+    last = None
+    try:
+        last = database.get_last_submission(update.effective_user.id)
+    except Exception:
+        pass
+
+    if last:
+        context.user_data["baby_family"] = last["family_name"]
+        context.user_data["baby_mother"] = last["mother_name"] or ""
+        await query.message.reply_text(
+            f"از اطلاعات قبلی‌ت استفاده می‌کنم:\n"
+            f"👨‍👩‍👧 نام خانوادگی: {last['family_name']} | نام مادر: {last['mother_name'] or '—'}\n\n"
+            f"(اگه می‌خوای این‌ها رو عوض کنی، اول با /start یه محاسبه‌ی جدید بزن)"
+        )
+        buttons = [[InlineKeyboardButton(label, callback_data=f"bstatus_{key}")] for key, label in baby_name.STATUS_OPTIONS]
+        buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bstatus_any")])
+        await query.message.reply_text(
+            "پایگاه اجتماعی دلخواه برای فرزند؟",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return BABY_STATUS
+
+    await query.message.reply_text("نام خانوادگی (پدر)؟")
+    return BABY_FAMILY
+
+
+async def babyname_get_family(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
+        return BABY_FAMILY
+    context.user_data["baby_family"] = clean
+    await update.message.reply_text("نام مادر؟")
+    return BABY_MOTHER
+
+
+async def babyname_get_mother(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    clean = sanitize_name(update.message.text)
+    if not clean:
+        await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
+        return BABY_MOTHER
+    context.user_data["baby_mother"] = clean
+
+    buttons = [[InlineKeyboardButton(label, callback_data=f"bstatus_{key}")] for key, label in baby_name.STATUS_OPTIONS]
+    buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bstatus_any")])
+    await update.message.reply_text(
+        "پایگاه اجتماعی دلخواه برای فرزند؟",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return BABY_STATUS
+
+
+async def babyname_get_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    val = query.data.split("_", 1)[1]
+    context.user_data["baby_status"] = None if val == "any" else val
+
+    buttons = [[InlineKeyboardButton(label, callback_data=f"bincome_{key}")] for key, label in baby_name.INCOME_OPTIONS]
+    buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bincome_any")])
+    await query.message.reply_text(
+        "وضعیت درآمد و معیشت دلخواه برای فرزند؟",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return BABY_INCOME
+
+
+async def babyname_get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    val = query.data.split("_", 1)[1]
+    ud = context.user_data
+    desired_income = None if val == "any" else val
+
+    results = baby_name.suggest_names(
+        ud["baby_gender"], ud["baby_family"], ud["baby_mother"],
+        ud.get("baby_status"), desired_income,
+    )
+    await query.message.reply_text(
+        baby_name.format_suggestions(ud["baby_gender"], results), parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+
 async def hafez_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🔮 *فال حافظ*\n\n"
@@ -917,6 +1030,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/hafez — فال حافظ روزانه\n"
         "/zodiac — طالع‌بینی امروز\n"
         "/natal — زایچه‌ی تقریبی (خورشید+ماه+طالع)\n"
+        "/babyname — پیشنهاد اسم فرزند\n"
         "/history — دیدن نتایج قبلی خودت\n"
         "/cancel — لغو مکالمه‌ی جاری\n"
         "/help — همین راهنما"
@@ -1234,6 +1348,19 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     application.add_handler(natal_handler)
+
+    babyname_handler = ConversationHandler(
+        entry_points=[CommandHandler("babyname", babyname_start)],
+        states={
+            BABY_GENDER: [CallbackQueryHandler(babyname_get_gender, pattern="^baby_(boy|girl)$")],
+            BABY_FAMILY: [MessageHandler(filters.TEXT & ~filters.COMMAND, babyname_get_family)],
+            BABY_MOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, babyname_get_mother)],
+            BABY_STATUS: [CallbackQueryHandler(babyname_get_status, pattern="^bstatus_")],
+            BABY_INCOME: [CallbackQueryHandler(babyname_get_income, pattern="^bincome_")],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(babyname_handler)
 
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
