@@ -29,7 +29,8 @@ def _name_pool(gender: str) -> list:
     return BOY_NAMES if gender == "boy" else GIRL_NAMES
 
 
-def evaluate_name(name: str, family_name: str, mother_name: str) -> dict:
+def evaluate_name(name_entry: dict, family_name: str, mother_name: str) -> dict:
+    name = name_entry["name"]
     kabir_name = abjad_kabir(name)
     a_val = kabir_name + abjad_kabir(mother_name)
     b_val = abjad_kabir(family_name) + kabir_name
@@ -38,6 +39,7 @@ def evaluate_name(name: str, family_name: str, mother_name: str) -> dict:
     baten = _reduce_full(kabir_name)
     return {
         "name": name,
+        "meaning": name_entry.get("meaning", ""),
         "status_key": status_key,
         "status_text": STATUS_TEXT[status_key],
         "income_key": income_key,
@@ -54,8 +56,8 @@ def suggest_names(gender: str, family_name: str, mother_name: str,
     desired_income: یکی از "1"(پرنوسان)/"2"(متوسط)/"0"(پایدار) یا None (فرقی نداره)
     """
     results = []
-    for name in _name_pool(gender):
-        info = evaluate_name(name, family_name, mother_name)
+    for name_entry in _name_pool(gender):
+        info = evaluate_name(name_entry, family_name, mother_name)
         status_ok = (desired_status is None) or (info["status_key"] == desired_status)
         income_ok = (desired_income is None) or (info["income_key"] == desired_income)
         if status_ok and income_ok:
@@ -72,7 +74,5 @@ def format_suggestions(gender: str, results: list) -> str:
         )
     lines = [f"👶 *پیشنهاد اسم {gender_label} — {len(results)} گزینه*\n"]
     for r in results:
-        lines.append(
-            f"• *{r['name']}* — پایگاه: {r['status_text']} | درآمد: {r['income_text'].split('،')[0]} | باطن: {r['baten']}"
-        )
+        lines.append(f"• *{r['name']}* — {r['meaning']}")
     return "\n".join(lines)
