@@ -865,19 +865,12 @@ async def babyname_get_gender(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if last:
         context.user_data["baby_family"] = last["family_name"]
-        context.user_data["baby_mother"] = last["mother_name"] or ""
         await query.message.reply_text(
-            f"از اطلاعات قبلی‌ت استفاده می‌کنم:\n"
-            f"👨‍👩‍👧 نام خانوادگی: {last['family_name']} | نام مادر: {last['mother_name'] or '—'}\n\n"
-            f"(اگه می‌خوای این‌ها رو عوض کنی، اول با /start یه محاسبه‌ی جدید بزن)"
+            f"نام خانوادگی رو از قبل دارم: {last['family_name']}\n\n"
+            f"نام *مادر فرزند* چیه؟ (دقت کن: این با نام مادر خودت فرق داره)",
+            parse_mode="Markdown",
         )
-        buttons = [[InlineKeyboardButton(label, callback_data=f"bstatus_{key}")] for key, label in baby_name.STATUS_OPTIONS]
-        buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bstatus_any")])
-        await query.message.reply_text(
-            "پایگاه اجتماعی دلخواه برای فرزند؟",
-            reply_markup=InlineKeyboardMarkup(buttons),
-        )
-        return BABY_STATUS
+        return BABY_MOTHER
 
     await query.message.reply_text("نام خانوادگی (پدر)؟")
     return BABY_FAMILY
@@ -889,7 +882,7 @@ async def babyname_get_family(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
         return BABY_FAMILY
     context.user_data["baby_family"] = clean
-    await update.message.reply_text("نام مادر؟")
+    await update.message.reply_text("نام مادر فرزند چیه؟")
     return BABY_MOTHER
 
 
@@ -898,44 +891,12 @@ async def babyname_get_mother(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not clean:
         await update.message.reply_text("❌ فقط حروف فارسی/انگلیسی مجازه. دوباره بفرست:")
         return BABY_MOTHER
-    context.user_data["baby_mother"] = clean
-
-    buttons = [[InlineKeyboardButton(label, callback_data=f"bstatus_{key}")] for key, label in baby_name.STATUS_OPTIONS]
-    buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bstatus_any")])
-    await update.message.reply_text(
-        "پایگاه اجتماعی دلخواه برای فرزند؟",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
-    return BABY_STATUS
-
-
-async def babyname_get_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    val = query.data.split("_", 1)[1]
-    context.user_data["baby_status"] = None if val == "any" else val
-
-    buttons = [[InlineKeyboardButton(label, callback_data=f"bincome_{key}")] for key, label in baby_name.INCOME_OPTIONS]
-    buttons.append([InlineKeyboardButton("فرقی نداره", callback_data="bincome_any")])
-    await query.message.reply_text(
-        "وضعیت درآمد و معیشت دلخواه برای فرزند؟",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
-    return BABY_INCOME
-
-
-async def babyname_get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    val = query.data.split("_", 1)[1]
     ud = context.user_data
-    desired_income = None if val == "any" else val
+    ud["baby_mother"] = clean
 
-    results = baby_name.suggest_names(
-        ud["baby_gender"], ud["baby_family"], ud["baby_mother"],
-        ud.get("baby_status"), desired_income,
-    )
-    await query.message.reply_text(
+    # پایگاه اجتماعی «صعودی» و درآمد «متوسط رو به بالا» به‌صورت پیش‌فرض بهترین ترکیب در نظر گرفته می‌شه
+    results = baby_name.suggest_names(ud["baby_gender"], ud["baby_family"], ud["baby_mother"], "2", "2")
+    await update.message.reply_text(
         baby_name.format_suggestions(ud["baby_gender"], results), parse_mode="Markdown"
     )
     return ConversationHandler.END
@@ -1355,8 +1316,6 @@ def main() -> None:
             BABY_GENDER: [CallbackQueryHandler(babyname_get_gender, pattern="^baby_(boy|girl)$")],
             BABY_FAMILY: [MessageHandler(filters.TEXT & ~filters.COMMAND, babyname_get_family)],
             BABY_MOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, babyname_get_mother)],
-            BABY_STATUS: [CallbackQueryHandler(babyname_get_status, pattern="^bstatus_")],
-            BABY_INCOME: [CallbackQueryHandler(babyname_get_income, pattern="^bincome_")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
