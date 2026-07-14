@@ -12,6 +12,7 @@
 """
 import json
 import os
+import random
 
 from cosmic_logic import abjad_kabir, _reduce_full, STATUS_TEXT, INCOME_TEXT
 
@@ -23,6 +24,32 @@ with open(os.path.join(BASE_DIR, "persian_names_girl.json"), encoding="utf-8") a
 
 STATUS_OPTIONS = [("1", "نزولی"), ("2", "صعودی"), ("3", "راکد")]
 INCOME_OPTIONS = [("1", "پرنوسان"), ("2", "متوسط رو به بالا"), ("0", "پایدار")]
+
+
+def _harmony_score(name: str, family_name: str) -> float:
+    """
+    امتیاز تقریبی «هم‌آوایی و شیکی» اسم فرزند در کنار نام خانوادگی.
+    هرچی امتیاز بالاتر، هماهنگی صوتی بهتر (heuristic ساده، نه علم زبان‌شناسی دقیق).
+    """
+    score = 0.0
+
+    # جریمه: حرف اول اسم و فامیل یکی باشه (حس تکراری/اسم کوچیک شبیه فامیلی)
+    if name[0] == family_name[0]:
+        score -= 2.0
+
+    # جریمه: حرف آخر اسم با حرف اول فامیل برخورد ناجور صوتی بده (تکرار پشت‌سرهم یک صامت)
+    if name[-1] == family_name[0]:
+        score -= 1.5
+
+    # پاداش: هماهنگی طول اسم و فامیل (نه خیلی کوتاه در برابر فامیل بلند، نه برعکس)
+    length_diff = abs(len(name) - len(family_name))
+    score += max(0.0, 2.0 - length_diff * 0.4)
+
+    # جریمه‌ی خفیف برای اسم‌های خیلی کوتاه (۲ حرفی) که معمولاً کنار فامیل بلند شیک نیستن
+    if len(name) <= 2:
+        score -= 1.0
+
+    return score
 
 
 def _name_pool(gender: str) -> list:
@@ -50,29 +77,57 @@ def evaluate_name(name_entry: dict, family_name: str, mother_name: str) -> dict:
 
 def suggest_names(gender: str, family_name: str, mother_name: str,
                    desired_status: str | None, desired_income: str | None,
-                   limit: int = 12) -> list:
+                   max_shown: int = 10) -> dict:
     """
     desired_status: یکی از "1"(نزولی)/"2"(صعودی)/"3"(راکد) یا None (فرقی نداره)
     desired_income: یکی از "1"(پرنوسان)/"2"(متوسط)/"0"(پایدار) یا None (فرقی نداره)
+
+    خروجی: {"top3": [...], "rest": [...], "total": N}
+    اگه تعداد کل نتایج <= max_shown، همه نشون داده می‌شن؛ وگرنه ۳ تای برتر (هماهنگ‌ترین)
+    + تا max_shown-3 تای دیگه به‌صورت تصادفی از بقیه.
     """
-    results = []
+    matches = []
     for name_entry in _name_pool(gender):
         info = evaluate_name(name_entry, family_name, mother_name)
         status_ok = (desired_status is None) or (info["status_key"] == desired_status)
         income_ok = (desired_income is None) or (info["income_key"] == desired_income)
         if status_ok and income_ok:
-            results.append(info)
-    return results[:limit]
+            info["harmony"] = _harmony_score(info["name"], family_name)
+            matches.append(info)
+
+    total = len(matches)
+    if total == 0:
+        return {"top3": [], "rest": [], "total": 0}
+
+    ranked = sorted(matches, key=lambda x: x["harmony"], reverse=True)
+    top3 = ranked[:3]
+
+    if total <= max_shown:
+        rest = ranked[3:]
+    else:
+        remaining_pool = ranked[3:]
+        k = min(max_shown - 3, len(remaining_pool))
+        rest = random.sample(remaining_pool, k) if k > 0 else []
+
+    return {"top3": top3, "rest": rest, "total": total}
 
 
-def format_suggestions(gender: str, results: list) -> str:
+def format_suggestions(gender: str, result: dict) -> str:
     gender_label = "پسر" if gender == "boy" else "دختر"
-    if not results:
+    if result["total"] == 0:
         return (
-            f"❌ با این ترکیب دقیق، اسمی توی فهرست فعلی پیدا نشد.\n"
-            f"می‌تونی یکی از فیلترها (پایگاه یا درآمد) رو «فرقی نداره» بذاری تا گزینه‌های بیشتری ببینی."
+            "❌ با این ترکیب دقیق، اسمی توی فهرست فعلی پیدا نشد.\n"
+            "می‌تونی یکی از فیلترها (پایگاه یا درآمد) رو «فرقی نداره» بذاری تا گزینه‌های بیشتری ببینی."
         )
-    lines = [f"👶 *پیشنهاد اسم {gender_label} — {len(results)} گزینه*\n"]
-    for r in results:
+
+    lines = [f"👶 *پیشنهاد اسم {gender_label}* (از {result['total']} گزینه‌ی مطابق)\n"]
+    lines.append("✨ *سه گزینه‌ی برتر (هم‌آواترین با فامیلی):*")
+    for r in result["top3"]:
         lines.append(f"• *{r['name']}* — {r['meaning']}")
+
+    if result["rest"]:
+        lines.append("\n📋 *بقیه‌ی گزینه‌ها:*")
+        for r in result["rest"]:
+            lines.append(f"• *{r['name']}* — {r['meaning']}")
+
     return "\n".join(lines)

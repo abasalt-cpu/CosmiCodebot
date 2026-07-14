@@ -856,23 +856,11 @@ async def babyname_get_gender(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     context.user_data["baby_gender"] = "boy" if query.data == "baby_boy" else "girl"
-
-    last = None
-    try:
-        last = database.get_last_submission(update.effective_user.id)
-    except Exception:
-        pass
-
-    if last:
-        context.user_data["baby_family"] = last["family_name"]
-        await query.message.reply_text(
-            f"نام خانوادگی رو از قبل دارم: {last['family_name']}\n\n"
-            f"نام *مادر فرزند* چیه؟ (دقت کن: این با نام مادر خودت فرق داره)",
-            parse_mode="Markdown",
-        )
-        return BABY_MOTHER
-
-    await query.message.reply_text("نام خانوادگی (پدر)؟")
+    await query.message.reply_text(
+        "نام خانوادگی *پدر فرزند* چیه؟ (این می‌شه فامیل فرزند)",
+        parse_mode="Markdown",
+    )
+    return BABY_FAMILY
     return BABY_FAMILY
 
 
