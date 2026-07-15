@@ -897,8 +897,13 @@ async def elham_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if update.callback_query:
         await update.callback_query.answer()
     try:
-        item = daily_inspiration.get_today_elham(update.effective_user.id)
-        await target.reply_text(daily_inspiration.format_elham(item), parse_mode="Markdown")
+        if _is_admin(update.effective_user.id):
+            item = daily_inspiration.get_random_elham()
+            note = "\n\n_(حالت تست ادمین: هر بار یه الهام تصادفی جدید)_"
+        else:
+            item = daily_inspiration.get_today_elham(update.effective_user.id)
+            note = ""
+        await target.reply_text(daily_inspiration.format_elham(item) + note, parse_mode="Markdown")
     except Exception:
         logger.exception("خطا در دریافت الهام روز")
         await target.reply_text("مشکلی در دریافت الهام روز پیش اومد.")

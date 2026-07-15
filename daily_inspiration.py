@@ -55,6 +55,11 @@ def get_today_elham(telegram_id: int) -> dict:
     return _ITEMS_BY_ID[item_id]
 
 
+def get_random_elham() -> dict:
+    """یک الهام کاملاً تصادفی، بدون درگیرشدن با منطق روزانه (فقط برای تست ادمین)."""
+    return random.choice(_ITEMS)
+
+
 def format_elham(item: dict) -> str:
     verses_text = "\n".join(item["verses"])
     poet_line = f"— {item['poet']}" if item.get("poet") else ""
