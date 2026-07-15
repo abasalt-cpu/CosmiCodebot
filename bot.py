@@ -885,11 +885,35 @@ async def babyname_get_mother(update: Update, context: ContextTypes.DEFAULT_TYPE
     ud["baby_mother"] = clean
 
     # پایگاه اجتماعی «صعودی» و درآمد «متوسط رو به بالا» به‌صورت پیش‌فرض بهترین ترکیب در نظر گرفته می‌شه
-    results = baby_name.suggest_names(ud["baby_gender"], ud["baby_family"], ud["baby_mother"], "2", "2")
-    await update.message.reply_text(
-        baby_name.format_suggestions(ud["baby_gender"], results), parse_mode="Markdown"
-    )
+    ud["baby_query"] = {
+        "gender": ud["baby_gender"], "family": ud["baby_family"], "mother": ud["baby_mother"],
+        "status": "2", "income": "2",
+    }
+    await _send_babyname_page(update.message, context, page=0)
     return ConversationHandler.END
+
+
+async def _send_babyname_page(target_message, context: ContextTypes.DEFAULT_TYPE, page: int) -> None:
+    q = context.user_data.get("baby_query")
+    if not q:
+        await target_message.reply_text("مشکلی پیش اومد، دوباره از /babyname شروع کن.")
+        return
+    result = baby_name.get_all_matches(q["gender"], q["family"], q["mother"], q["status"], q["income"])
+    page_data = baby_name.format_page(q["gender"], result, page=page)
+
+    reply_markup = None
+    if page_data["has_more"]:
+        reply_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("➡️ ۱۰ اسم بعدی", callback_data=f"babynext_{page + 1}")]]
+        )
+    await target_message.reply_text(page_data["text"], parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def babyname_next_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split("_")[1])
+    await _send_babyname_page(query.message, context, page=page)
 
 
 async def elham_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1329,6 +1353,7 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     application.add_handler(babyname_handler)
+    application.add_handler(CallbackQueryHandler(babyname_next_page, pattern="^babynext_\\d+$"))
 
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))

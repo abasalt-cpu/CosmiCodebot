@@ -75,16 +75,11 @@ def evaluate_name(name_entry: dict, family_name: str, mother_name: str) -> dict:
     }
 
 
-def suggest_names(gender: str, family_name: str, mother_name: str,
-                   desired_status: str | None, desired_income: str | None,
-                   max_shown: int = 10) -> dict:
+def get_all_matches(gender: str, family_name: str, mother_name: str,
+                     desired_status: str | None, desired_income: str | None) -> dict:
     """
-    desired_status: یکی از "1"(نزولی)/"2"(صعودی)/"3"(راکد) یا None (فرقی نداره)
-    desired_income: یکی از "1"(پرنوسان)/"2"(متوسط)/"0"(پایدار) یا None (فرقی نداره)
-
-    خروجی: {"top3": [...], "rest": [...], "total": N}
-    اگه تعداد کل نتایج <= max_shown، همه نشون داده می‌شن؛ وگرنه ۳ تای برتر (هماهنگ‌ترین)
-    + تا max_shown-3 تای دیگه به‌صورت تصادفی از بقیه.
+    تمام اسم‌های مطابق (بدون برش) را برمی‌گرداند:
+    {"top3": [...سه‌تای هم‌آواترین...], "rest": [...بقیه، بر اساس هماهنگی مرتب‌شده...], "total": N}
     """
     matches = []
     for name_entry in _name_pool(gender):
@@ -100,34 +95,42 @@ def suggest_names(gender: str, family_name: str, mother_name: str,
         return {"top3": [], "rest": [], "total": 0}
 
     ranked = sorted(matches, key=lambda x: x["harmony"], reverse=True)
-    top3 = ranked[:3]
-
-    if total <= max_shown:
-        rest = ranked[3:]
-    else:
-        remaining_pool = ranked[3:]
-        k = min(max_shown - 3, len(remaining_pool))
-        rest = random.sample(remaining_pool, k) if k > 0 else []
-
-    return {"top3": top3, "rest": rest, "total": total}
+    return {"top3": ranked[:3], "rest": ranked[3:], "total": total}
 
 
-def format_suggestions(gender: str, result: dict) -> str:
+def format_page(gender: str, result: dict, page: int = 0, page_size: int = 10) -> dict:
+    """
+    خروجی: {"text": متن قابل ارسال, "has_more": آیا صفحه‌ی بعدی هست}
+    page=0 شامل سه‌تای برتر + ۱۰ تای اول از بقیه است؛ صفحه‌های بعدی فقط ۱۰تا ۱۰تا از rest.
+    """
     gender_label = "پسر" if gender == "boy" else "دختر"
     if result["total"] == 0:
-        return (
-            "❌ با این ترکیب دقیق، اسمی توی فهرست فعلی پیدا نشد.\n"
-            "می‌تونی یکی از فیلترها (پایگاه یا درآمد) رو «فرقی نداره» بذاری تا گزینه‌های بیشتری ببینی."
-        )
+        return {
+            "text": (
+                "❌ با این ترکیب دقیق، اسمی توی فهرست فعلی پیدا نشد.\n"
+                "می‌تونی یکی از فیلترها (پایگاه یا درآمد) رو «فرقی نداره» بذاری تا گزینه‌های بیشتری ببینی."
+            ),
+            "has_more": False,
+        }
 
-    lines = [f"👶 *پیشنهاد اسم {gender_label}* (از {result['total']} گزینه‌ی مطابق)\n"]
-    lines.append("✨ *سه گزینه‌ی برتر (هم‌آواترین با فامیلی):*")
-    for r in result["top3"]:
+    rest = result["rest"]
+    start = page * page_size
+    end = start + page_size
+    chunk = rest[start:end]
+    has_more = end < len(rest)
+
+    lines = []
+    if page == 0:
+        lines.append(f"👶 *پیشنهاد اسم {gender_label}* (از {result['total']} گزینه‌ی مطابق)\n")
+        lines.append("✨ *سه گزینه‌ی برتر (هم‌آواترین با فامیلی):*")
+        for r in result["top3"]:
+            lines.append(f"• *{r['name']}* — {r['meaning']}")
+        if chunk:
+            lines.append("\n📋 *گزینه‌های بیشتر:*")
+    else:
+        lines.append(f"📋 *ادامه‌ی گزینه‌ها (صفحه {page + 1}):*")
+
+    for r in chunk:
         lines.append(f"• *{r['name']}* — {r['meaning']}")
 
-    if result["rest"]:
-        lines.append("\n📋 *بقیه‌ی گزینه‌ها:*")
-        for r in result["rest"]:
-            lines.append(f"• *{r['name']}* — {r['meaning']}")
-
-    return "\n".join(lines)
+    return {"text": "\n".join(lines), "has_more": has_more}
