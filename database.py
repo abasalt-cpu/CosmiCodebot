@@ -83,6 +83,39 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_contacts_owner ON contacts(owner_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS elham_state (
+                telegram_id INTEGER PRIMARY KEY,
+                shuffled_order TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                last_shown_date TEXT
+            )
+            """
+        )
+
+
+def get_elham_state(telegram_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM elham_state WHERE telegram_id = ?", (telegram_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_elham_state(telegram_id: int, shuffled_order: str, position: int, last_shown_date: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO elham_state (telegram_id, shuffled_order, position, last_shown_date)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                shuffled_order = excluded.shuffled_order,
+                position = excluded.position,
+                last_shown_date = excluded.last_shown_date
+            """,
+            (telegram_id, shuffled_order, position, last_shown_date),
+        )
 
 
 def touch_user(telegram_id: int, telegram_username: str) -> None:
