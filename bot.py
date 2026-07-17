@@ -816,22 +816,58 @@ CITY_KEYBOARD = _build_city_keyboard()
 async def natal_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     try:
-        last = database.get_last_submission(user.id)
+        history = database.get_user_history(user.id, limit=10)
     except Exception:
-        last = None
+        history = []
 
-    if not last:
+    if not history:
         await update.message.reply_text(
             "برای محاسبه‌ی زایچه، اول باید یه‌بار عدد کیهانی‌ت رو با /start محاسبه کنی "
             "(چون از همون تاریخ تولد استفاده می‌کنیم)."
         )
         return ConversationHandler.END
 
-    context.user_data["natal_jy"] = last["jalali_year"]
-    context.user_data["natal_jm"] = last["jalali_month"]
-    context.user_data["natal_jd"] = last["jalali_day"]
+    # حذف اسامی تکراری - فقط آخرین محاسبه‌ی هر اسم نگه داشته می‌شه
+    seen_names = set()
+    unique_history = []
+    for h in history:
+        key = (h["first_name"], h["family_name"])
+        if key not in seen_names:
+            seen_names.add(key)
+            unique_history.append(h)
 
+    if len(unique_history) == 1:
+        return await _natal_proceed_with(update.message, context, unique_history[0])
+
+    context.user_data["natal_history"] = unique_history
+    buttons = []
+    for i, h in enumerate(unique_history):
+        label = f"{h['first_name']} {h['family_name']} — {h['created_at'][:10]}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"natalpick_{i}")])
     await update.message.reply_text(
+        "چند محاسبه‌ی قبلی ازت دارم. زایچه‌ی کدومشون رو می‌خوای؟",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return NATAL_HOUR
+
+
+async def natal_pick_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data.split("_")[1])
+    history = context.user_data.get("natal_history")
+    if not history or idx >= len(history):
+        await query.message.reply_text("این گزینه دیگه در دسترس نیست. دوباره /natal رو بزن.")
+        return ConversationHandler.END
+    return await _natal_proceed_with(query.message, context, history[idx])
+
+
+async def _natal_proceed_with(target_message, context: ContextTypes.DEFAULT_TYPE, chosen: dict) -> int:
+    context.user_data["natal_jy"] = chosen["jalali_year"]
+    context.user_data["natal_jm"] = chosen["jalali_month"]
+    context.user_data["natal_jd"] = chosen["jalali_day"]
+
+    await target_message.reply_text(
         "🌌 برای محاسبه‌ی زایچه‌ی تقریبی، به ساعت و محل تولدت هم نیاز دارم.\n\n"
         "ساعت تولدت چند بود؟ (فقط عدد ساعت، ۰ تا ۲۳ — اگه دقیق نمی‌دونی، تقریبی بفرست)"
     )
@@ -1378,7 +1414,10 @@ def main() -> None:
     natal_handler = ConversationHandler(
         entry_points=[CommandHandler("natal", natal_start)],
         states={
-            NATAL_HOUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, natal_get_hour)],
+            NATAL_HOUR: [
+                CallbackQueryHandler(natal_pick_history, pattern="^natalpick_\\d+$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, natal_get_hour),
+            ],
             NATAL_MINUTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, natal_get_minute)],
             NATAL_CITY: [CallbackQueryHandler(natal_get_city, pattern="^city_")],
         },
