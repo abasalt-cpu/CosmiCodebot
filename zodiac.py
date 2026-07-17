@@ -67,11 +67,22 @@ def format_horoscope(jalali_month: int) -> str:
     sign = get_sign(jalali_month)
     forecast = get_daily_forecast(jalali_month)
     color = get_daily_lucky_color(jalali_month)
+    extra = ""
+    if sign.get("strengths"):
+        extra = (
+            f"\n💪 *نقاط قوت:* {sign['strengths']}\n"
+            f"⚠️ *نقاط ضعف:* {sign['weaknesses']}\n"
+            f"✅ *عامل مثبت:* {sign['positive_factor']}\n"
+            f"❌ *عامل منفی:* {sign['negative_factor']}\n"
+            f"🔑 *کلید شادی:* {sign['happiness_key']}\n"
+            f"🌱 *درس معنوی:* {sign['spiritual_lesson']}\n"
+        )
     return (
         f"{sign['emoji']} *طالع‌بینی امروز — برج {sign['name']}*\n\n"
         f"_{sign['trait']}_\n\n"
         f"🔥 *عنصر:* {sign['element']} — 🪐 *سیاره‌ی حاکم:* {sign['ruling_planet']}\n"
-        f"💎 *سنگ برج:* {sign['stone']} — 🎨 *رنگ خوش‌یمن امروز:* {color}\n\n"
+        f"💎 *سنگ برج:* {sign['stone']} — 🎨 *رنگ خوش‌یمن امروز:* {color}\n"
+        f"{extra}\n"
         f"💞 *عشق و رابطه:* {forecast['love']}\n\n"
         f"💼 *کار و تلاش:* {forecast['work']}\n\n"
         f"🌿 *سلامتی:* {forecast['health']}\n\n"

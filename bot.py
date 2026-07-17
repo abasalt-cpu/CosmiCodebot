@@ -731,21 +731,49 @@ async def zodiac_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if update.callback_query:
         await update.callback_query.answer()
 
-    last = None
+    history = []
     try:
-        last = database.get_last_submission(update.effective_user.id)
+        history = database.get_user_history(update.effective_user.id, limit=10)
     except Exception:
         pass
 
-    if last:
-        await target.reply_text(
-            zodiac.format_horoscope(last["jalali_month"]), parse_mode="Markdown"
-        )
-    else:
+    if not history:
         await target.reply_text(
             "ماه تولد شمسی‌ت رو انتخاب کن تا برجت رو پیدا کنم:",
             reply_markup=ZODIAC_MONTH_KEYBOARD,
         )
+        return
+
+    if len(history) == 1:
+        await target.reply_text(
+            zodiac.format_horoscope(history[0]["jalali_month"]), parse_mode="Markdown"
+        )
+        return
+
+    # چند محاسبه‌ی قبلی موجوده -> بذار خودش انتخاب کنه
+    context.user_data["zodiac_history"] = history
+    buttons = []
+    for i, h in enumerate(history):
+        label = f"{h['first_name']} {h['family_name']} — {h['created_at'][:10]}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"zpick_{i}")])
+    await target.reply_text(
+        "چند محاسبه‌ی قبلی ازت دارم. برای کدومشون می‌خوای طالع بگیری؟",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def zodiac_pick_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data.split("_")[1])
+    history = context.user_data.get("zodiac_history")
+    if not history or idx >= len(history):
+        await query.message.reply_text("این گزینه دیگه در دسترس نیست. دوباره /zodiac رو بزن.")
+        return
+    chosen = history[idx]
+    await query.message.reply_text(
+        zodiac.format_horoscope(chosen["jalali_month"]), parse_mode="Markdown"
+    )
 
 
 async def zodiac_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1376,6 +1404,7 @@ def main() -> None:
     application.add_handler(CommandHandler("zodiac", zodiac_command))
     application.add_handler(CallbackQueryHandler(zodiac_command, pattern="^open_zodiac$"))
     application.add_handler(CallbackQueryHandler(zodiac_month_selected, pattern="^zmonth_\\d+$"))
+    application.add_handler(CallbackQueryHandler(zodiac_pick_history, pattern="^zpick_\\d+$"))
     application.add_handler(CallbackQueryHandler(hafez_from_button, pattern="^open_hafez$"))
     application.add_handler(CallbackQueryHandler(hafez_reveal, pattern="^get_hafez$"))
     application.add_handler(CallbackQueryHandler(hafez_show_full, pattern="^hafezfull_\\d+$"))

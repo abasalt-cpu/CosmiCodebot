@@ -323,12 +323,12 @@ def get_top_numbers() -> dict:
     return {"destiny": destiny, "fate": fate, "vibration": vibration, "baten": baten}
 
 
-def get_user_history(telegram_id: int, limit: int = 5) -> list:
+def get_user_history(telegram_id: int, limit: int = 10) -> list:
     with _connect() as conn:
         rows = conn.execute(
             """
             SELECT first_name, family_name, cosmic_code, destiny_num, fate_num,
-                   vibration_num, baten_num, created_at
+                   vibration_num, baten_num, jalali_month, created_at
             FROM submissions
             WHERE telegram_id = ?
             ORDER BY id DESC
