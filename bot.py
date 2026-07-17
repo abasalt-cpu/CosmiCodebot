@@ -750,10 +750,25 @@ async def zodiac_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # حذف اسامی تکراری - فقط آخرین محاسبه‌ی هر اسم نگه داشته می‌شه
+    seen_names = set()
+    unique_history = []
+    for h in history:
+        key = (h["first_name"], h["family_name"])
+        if key not in seen_names:
+            seen_names.add(key)
+            unique_history.append(h)
+
+    if len(unique_history) == 1:
+        await target.reply_text(
+            zodiac.format_horoscope(unique_history[0]["jalali_month"]), parse_mode="Markdown"
+        )
+        return
+
     # چند محاسبه‌ی قبلی موجوده -> بذار خودش انتخاب کنه
-    context.user_data["zodiac_history"] = history
+    context.user_data["zodiac_history"] = unique_history
     buttons = []
-    for i, h in enumerate(history):
+    for i, h in enumerate(unique_history):
         label = f"{h['first_name']} {h['family_name']} — {h['created_at'][:10]}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"zpick_{i}")])
     await target.reply_text(
