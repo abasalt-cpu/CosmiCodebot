@@ -100,7 +100,7 @@ MONTH_KEYBOARD = InlineKeyboardMarkup(
 
 
 USER_COMMANDS = [
-    ("start", "🌌 محاسبه‌ی جدید"),
+    ("start", "🌌 محاسبه کد کیهانی"),
     ("menu", "📋 منوی اصلی"),
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("hafez", "🔮 فال حافظ"),
@@ -160,7 +160,7 @@ def _result_keyboard(data: dict, full_name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("🔄 محاسبه جدید", callback_data="new_calc"),
+                InlineKeyboardButton("🔄 محاسبه کد کیهانی", callback_data="new_calc"),
                 InlineKeyboardButton("📜 تاریخچه من", callback_data="show_history"),
             ],
             [InlineKeyboardButton("💾 ذخیره به‌عنوان مخاطب", callback_data="save_contact")],
@@ -434,31 +434,87 @@ async def compare_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return CMP_CHOICE
 
 
+def _dedup_history(history: list) -> list:
+    """حذف اسامی تکراری - فقط آخرین محاسبه‌ی هر اسم نگه داشته می‌شه."""
+    seen, unique = set(), []
+    for h in history:
+        key = (h["first_name"], h["family_name"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(h)
+    return unique
+
+
 async def compare_pick_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     user = update.effective_user
 
-    last = database.get_last_submission(user.id)
-    if not last:
+    try:
+        history = _dedup_history(database.get_user_history(user.id, limit=10))
+    except Exception:
+        history = []
+    if not history:
         await query.message.reply_text("محاسبه‌ی قبلی‌ای پیدا نشد. با /start اول یه محاسبه انجام بده.")
         return ConversationHandler.END
-    context.user_data["p1_name"] = f"{last['first_name']} {last['family_name']}"
-    context.user_data["p1_data"] = last
 
-    contacts = database.get_contacts(user.id)
+    if len(history) > 1:
+        context.user_data["cmp_self_history"] = history
+        context.user_data["cmp_self_next"] = "contact"
+        buttons = [
+            [InlineKeyboardButton(f"{h['first_name']} {h['family_name']} — {h['created_at'][:10]}",
+                                   callback_data=f"cmpself_{i}")]
+            for i, h in enumerate(history)
+        ]
+        await query.message.reply_text(
+            "چند محاسبه‌ی قبلی ازت دارم. کدومش «خودت» باشه؟",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return CMP_CHOICE
+
+    return await _compare_self_to_contact_list(query.message, user.id, context, history[0])
+
+
+async def _compare_self_to_contact_list(target_message, user_id: int, context: ContextTypes.DEFAULT_TYPE, chosen: dict) -> int:
+    context.user_data["p1_name"] = f"{chosen['first_name']} {chosen['family_name']}"
+    context.user_data["p1_data"] = chosen
+
+    try:
+        contacts = database.get_contacts(user_id)
+    except Exception:
+        contacts = []
     if not contacts:
-        await query.message.reply_text("هنوز هیچ مخاطبی ذخیره نکردی.")
+        await target_message.reply_text("هنوز هیچ مخاطبی ذخیره نکردی.")
         return ConversationHandler.END
 
     buttons = [
         [InlineKeyboardButton(f"{c['first_name']} {c['family_name']}", callback_data=f"contact_{c['id']}")]
         for c in contacts
     ]
-    await query.message.reply_text(
+    await target_message.reply_text(
         "کدوم مخاطب رو می‌خوای مقایسه کنی؟", reply_markup=InlineKeyboardMarkup(buttons)
     )
     return CMP_CHOICE
+
+
+async def compare_self_history_picked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    idx = int(query.data.split("_")[1])
+    history = context.user_data.get("cmp_self_history")
+    next_step = context.user_data.get("cmp_self_next", "contact")
+    if not history or idx >= len(history):
+        await query.message.reply_text("این گزینه دیگه در دسترس نیست. دوباره از /compare شروع کن.")
+        return ConversationHandler.END
+
+    chosen = history[idx]
+    if next_step == "type_p2":
+        context.user_data["p1_name"] = f"{chosen['first_name']} {chosen['family_name']}"
+        context.user_data["p1_data"] = chosen
+        await query.message.reply_text("نام نفر دوم؟")
+        return CMP_P2_FIRST
+
+    return await _compare_self_to_contact_list(query.message, update.effective_user.id, context, chosen)
 
 
 async def compare_contact_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -528,12 +584,31 @@ async def compare_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.answer()
 
     if query.data == "cmp_self":
-        last = database.get_last_submission(update.effective_user.id)
-        if not last:
+        try:
+            history = _dedup_history(database.get_user_history(update.effective_user.id, limit=10))
+        except Exception:
+            history = []
+        if not history:
             await query.message.reply_text("محاسبه‌ی قبلی‌ای پیدا نشد. با /start اول یه محاسبه انجام بده.")
             return ConversationHandler.END
-        context.user_data["p1_name"] = f"{last['first_name']} {last['family_name']}"
-        context.user_data["p1_data"] = last
+
+        if len(history) > 1:
+            context.user_data["cmp_self_history"] = history
+            context.user_data["cmp_self_next"] = "type_p2"
+            buttons = [
+                [InlineKeyboardButton(f"{h['first_name']} {h['family_name']} — {h['created_at'][:10]}",
+                                       callback_data=f"cmpself_{i}")]
+                for i, h in enumerate(history)
+            ]
+            await query.message.reply_text(
+                "چند محاسبه‌ی قبلی ازت دارم. کدومش «خودت» باشه؟",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return CMP_CHOICE
+
+        chosen = history[0]
+        context.user_data["p1_name"] = f"{chosen['first_name']} {chosen['family_name']}"
+        context.user_data["p1_data"] = chosen
         await query.message.reply_text("نام نفر دوم؟")
         return CMP_P2_FIRST
 
@@ -1052,7 +1127,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     is_admin = _is_admin(update.effective_user.id)
 
     buttons = [
-        [InlineKeyboardButton("🌌 محاسبه‌ی جدید", callback_data="new_calc")],
+        [InlineKeyboardButton("🌌 محاسبه کد کیهانی", callback_data="new_calc")],
         [InlineKeyboardButton("🔮 فال حافظ", callback_data="open_hafez")],
         [InlineKeyboardButton("🌅 الهام روز", callback_data="open_elham")],
         [InlineKeyboardButton("♈️ طالع‌بینی امروز", callback_data="open_zodiac")],
@@ -1396,6 +1471,7 @@ def main() -> None:
                 CallbackQueryHandler(compare_choice, pattern="^cmp_(self|new)$"),
                 CallbackQueryHandler(compare_pick_contact, pattern="^cmp_contact$"),
                 CallbackQueryHandler(compare_contact_selected, pattern="^contact_\\d+$"),
+                CallbackQueryHandler(compare_self_history_picked, pattern="^cmpself_\\d+$"),
             ],
             CMP_P2_FIRST: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_first_name)],
             CMP_P2_FAMILY: [MessageHandler(filters.TEXT & ~filters.COMMAND, compare_get_family_name)],
