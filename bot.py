@@ -47,6 +47,7 @@ import baby_name
 import daily_inspiration
 import database
 import hafez_fal
+import zamanbandi
 import image_report
 import natal_chart
 import zodiac
@@ -104,6 +105,7 @@ USER_COMMANDS = [
     ("menu", "📋 منوی اصلی"),
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("hafez", "🔮 فال حافظ"),
+    ("zamanbandi", "⏳ زمان‌بندی خدا"),
     ("elham", "🌅 الهام روز"),
     ("zodiac", "♈️ طالع‌بینی امروز"),
     ("natal", "🌌 زایچه‌ی تقریبی"),
@@ -1087,6 +1089,18 @@ async def elham_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await target.reply_text("مشکلی در دریافت الهام روز پیش اومد.")
 
 
+async def zamanbandi_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.callback_query.message if update.callback_query else update.message
+    if update.callback_query:
+        await update.callback_query.answer()
+    try:
+        item = zamanbandi.get_daily_zamanbandi(update.effective_user.id)
+        await target.reply_text(zamanbandi.format_zamanbandi(item), parse_mode="Markdown")
+    except Exception:
+        logger.exception("خطا در دریافت زمان‌بندی خدا")
+        await target.reply_text("مشکلی پیش اومد.")
+
+
 async def hafez_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🔮 *فال حافظ*\n\n"
@@ -1129,6 +1143,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     buttons = [
         [InlineKeyboardButton("🌌 محاسبه کد کیهانی", callback_data="new_calc")],
         [InlineKeyboardButton("🔮 فال حافظ", callback_data="open_hafez")],
+        [InlineKeyboardButton("⏳ به زمان‌بندی خدا اعتماد کن", callback_data="open_zamanbandi")],
         [InlineKeyboardButton("🌅 الهام روز", callback_data="open_elham")],
         [InlineKeyboardButton("♈️ طالع‌بینی امروز", callback_data="open_zodiac")],
         [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
@@ -1175,6 +1190,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/compare — مقایسه با یک نفر دیگر\n"
         "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
         "/hafez — فال حافظ روزانه\n"
+        "/zamanbandi — به زمان‌بندی خدا اعتماد کن\n"
         "/elham — الهام روز (تک‌بیت/مناجات)\n"
         "/zodiac — طالع‌بینی امروز\n"
         "/natal — زایچه‌ی تقریبی (خورشید+ماه+طالع)\n"
@@ -1529,6 +1545,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(delete_contact_button, pattern="^delcontact_\\d+$"))
     application.add_handler(CommandHandler("contacts", contacts_command))
     application.add_handler(CommandHandler("hafez", hafez_command))
+    application.add_handler(CommandHandler("zamanbandi", zamanbandi_reveal))
+    application.add_handler(CallbackQueryHandler(zamanbandi_reveal, pattern="^open_zamanbandi$"))
     application.add_handler(CommandHandler("elham", elham_command))
     application.add_handler(CallbackQueryHandler(elham_command, pattern="^open_elham$"))
     application.add_handler(CommandHandler("zodiac", zodiac_command))
