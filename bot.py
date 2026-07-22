@@ -1094,7 +1094,7 @@ async def zamanbandi_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.callback_query:
         await update.callback_query.answer()
     try:
-        item = zamanbandi.get_daily_zamanbandi(update.effective_user.id)
+        item = zamanbandi.get_sample_zamanbandi()
         await target.reply_text(zamanbandi.format_zamanbandi(item), parse_mode="Markdown")
     except Exception:
         logger.exception("خطا در دریافت زمان‌بندی خدا")
