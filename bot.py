@@ -47,6 +47,7 @@ import baby_name
 import daily_inspiration
 import database
 import hafez_fal
+import munajat
 import zamanbandi
 import image_report
 import natal_chart
@@ -106,6 +107,7 @@ USER_COMMANDS = [
     ("compare", "🔗 مقایسه با یک نفر دیگر"),
     ("hafez", "🔮 فال حافظ"),
     ("zamanbandi", "⏳ زمان‌بندی خدا"),
+    ("munajat", "🕊 مناجات"),
     ("elham", "🌅 الهام روز"),
     ("zodiac", "♈️ طالع‌بینی امروز"),
     ("natal", "🌌 زایچه‌ی تقریبی"),
@@ -1089,6 +1091,18 @@ async def elham_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await target.reply_text("مشکلی در دریافت الهام روز پیش اومد.")
 
 
+async def munajat_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    target = update.callback_query.message if update.callback_query else update.message
+    if update.callback_query:
+        await update.callback_query.answer()
+    try:
+        item = munajat.get_random_munajat()
+        await target.reply_text(munajat.format_munajat(item), parse_mode="Markdown")
+    except Exception:
+        logger.exception("خطا در دریافت مناجات")
+        await target.reply_text("مشکلی پیش اومد.")
+
+
 async def zamanbandi_reveal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target = update.callback_query.message if update.callback_query else update.message
     if update.callback_query:
@@ -1144,6 +1158,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         [InlineKeyboardButton("🌌 محاسبه کد کیهانی", callback_data="new_calc")],
         [InlineKeyboardButton("🔮 فال حافظ", callback_data="open_hafez")],
         [InlineKeyboardButton("⏳ به زمان‌بندی خدا اعتماد کن", callback_data="open_zamanbandi")],
+        [InlineKeyboardButton("🕊 مناجات", callback_data="open_munajat")],
         [InlineKeyboardButton("🌅 الهام روز", callback_data="open_elham")],
         [InlineKeyboardButton("♈️ طالع‌بینی امروز", callback_data="open_zodiac")],
         [InlineKeyboardButton("📜 تاریخچه‌ی من", callback_data="show_history")],
@@ -1191,6 +1206,7 @@ async def help_command_impl(target_message, user_id: int) -> None:
         "/contacts — مخاطبین ذخیره‌شده‌ی تو\n"
         "/hafez — فال حافظ روزانه\n"
         "/zamanbandi — به زمان‌بندی خدا اعتماد کن\n"
+        "/munajat — مناجات خواجه عبدالله انصاری\n"
         "/elham — الهام روز (تک‌بیت/مناجات)\n"
         "/zodiac — طالع‌بینی امروز\n"
         "/natal — زایچه‌ی تقریبی (خورشید+ماه+طالع)\n"
@@ -1546,6 +1562,8 @@ def main() -> None:
     application.add_handler(CommandHandler("contacts", contacts_command))
     application.add_handler(CommandHandler("hafez", hafez_command))
     application.add_handler(CommandHandler("zamanbandi", zamanbandi_reveal))
+    application.add_handler(CommandHandler("munajat", munajat_reveal))
+    application.add_handler(CallbackQueryHandler(munajat_reveal, pattern="^open_munajat$"))
     application.add_handler(CallbackQueryHandler(zamanbandi_reveal, pattern="^open_zamanbandi$"))
     application.add_handler(CommandHandler("elham", elham_command))
     application.add_handler(CallbackQueryHandler(elham_command, pattern="^open_elham$"))
